@@ -7,7 +7,7 @@ import twstock
 import plotly.graph_objects as go
 import plotly.express as px
 
-st.set_page_config(page_title="HIOS 波段雷達 V16.1", layout="wide")
+st.set_page_config(page_title="HIOS 波段雷達 V16.2", layout="wide")
 st.sidebar.title("🚀 HIOS 系統導覽")
 page = st.sidebar.radio("功能模組", ["🔍 雷達掃描 (動態記憶版)", "📊 策略競技場 (多維度回測)", "📈 互動 K 線圖"])
 
@@ -15,10 +15,10 @@ def get_stock_name(code):
     return twstock.codes[code].name if code in twstock.codes else "未知"
 
 # ==========================================
-# 頁面 1：雷達掃描 (V16.1 動態記憶與快照)
+# 頁面 1：雷達掃描 (V16.2 雙引擎全市場版)
 # ==========================================
 if page == "🔍 雷達掃描 (動態記憶版)":
-    st.title("🚀 HIOS 波段雷達 (V16.1 旗艦版)")
+    st.title("🚀 HIOS 波段雷達 (V16.2 雙引擎全市場版)")
     CACHE_FILE = "market_data_cache.json"
 
     if 'raw_market_data' not in st.session_state:
@@ -40,11 +40,10 @@ if page == "🔍 雷達掃描 (動態記憶版)":
 
     st.sidebar.header("📥 第一步：資料獲取設定")
     st.sidebar.info(f"💾 資料庫最後更新：\n**{st.session_state.get('last_update', '尚未抓取')}**")
-    scan_mode = st.sidebar.radio("掃描範圍：", ("自選股 (快速)", "上市 (TWSE) 約900檔", "上櫃 (TPEx) 約800檔"))
+    scan_mode = st.sidebar.radio("掃描範圍：", ("自選股 (快速)", "上市 (TWSE) 約900檔", "上櫃 (TPEx) 約800檔", "全市場 (上市+上櫃) 約1700檔"))
     tickers_input = st.sidebar.text_area("自選股代號 (逗號分隔)", "2382, 3413, 3015, 8210, 2421") if scan_mode == "自選股 (快速)" else ""
-    
-    st.sidebar.markdown("---")
-    chip_source = st.sidebar.radio("籌碼資料來源：", ("手動上傳 CSV (100%準確)", "自動抓取 (TWSE上市，可能不穩)"))
+        st.sidebar.markdown("---")
+    chip_source = st.sidebar.radio("籌碼資料來源：", ("手動上傳 CSV (100%準確)", "自動抓取 (上市+上櫃 API，可能延遲)"))
     uploaded_chip_csv = st.sidebar.file_uploader("上傳今日三大法人 CSV", type=["csv"]) if "手動" in chip_source else None
 
     if st.sidebar.button("🚀 啟動資料抓取 (每日只需按一次)"):
@@ -60,12 +59,28 @@ if page == "🔍 雷達掃描 (動態記憶版)":
                     chip_data[c] = {"外資": pd.to_numeric(str(r[fc]).replace(',',''), errors='coerce') or 0, "投信": pd.to_numeric(str(r[ic]).replace(',',''), errors='coerce') or 0}
             except: st.sidebar.error("CSV 解析失敗")
         elif "自動" in chip_source:
+            # 抓取上市籌碼
             try:
                 res = requests.get("https://openapi.twse.com.tw/v1/fund/T86_ALL", timeout=10 )
                 if res.status_code == 200:
                     for item in res.json():
                         c = str(item.get('Code', '')).strip()
                         chip_data[c] = {"外資": float(str(item.get('ForeignInvestorDifference', '0')).replace(',', ''))/1000, "投信": float(str(item.get('InvestmentTrustDifference', '0')).replace(',', ''))/1000}
+            except: pass
+            # 抓取上櫃籌碼 (TPEx API)
+            try:
+                res_otc = requests.get("https://www.tpex.org.tw/openapi/v1/t112sb0eb", timeout=10 ) # 外資
+                res_otc_it = requests.get("https://www.tpex.org.tw/openapi/v1/t112sb0ec", timeout=10 ) # 投信
+                if res_otc.status_code == 200:
+                    for item in res_otc.json():
+                        c = str(item.get('SecuritiesCompanyCode', '')).strip()
+                        if c not in chip_data: chip_data[c] = {"外資": 0, "投信": 0}
+                        chip_data[c]["外資"] = float(str(item.get('Difference', '0')).replace(',', ''))/1000
+                if res_otc_it.status_code == 200:
+                    for item in res_otc_it.json():
+                        c = str(item.get('SecuritiesCompanyCode', '')).strip()
+                        if c not in chip_data: chip_data[c] = {"外資": 0, "投信": 0}
+                        chip_data[c]["投信"] = float(str(item.get('Difference', '0')).replace(',', ''))/1000
             except: pass
 
         target_tickers, stock_names_dict = [], {}
@@ -76,7 +91,13 @@ if page == "🔍 雷達掃描 (動態記憶版)":
                     stock_names_dict[pc] = twstock.codes[pc].name
                     target_tickers.append(f"{pc}{'.TW' if twstock.codes[pc].market == '上市' else '.TWO'}")
                 else: target_tickers.append(f"{pc}.TW")
-        else: target_tickers, stock_names_dict = get_market_tickers(scan_mode)
+        elif scan_mode == "全市場 (上市+上櫃) 約1700檔":
+            t1, n1 = get_market_tickers("上市")
+            t2, n2 = get_market_tickers("上櫃")
+            target_tickers = t1 + t2
+            stock_names_dict = {**n1, **n2}
+        else: 
+            target_tickers, stock_names_dict = get_market_tickers(scan_mode)
 
         raw_results, progress_bar, status_text = [], st.progress(0), st.empty()
         for i, ticker in enumerate(target_tickers):
@@ -112,185 +133,8 @@ if page == "🔍 雷達掃描 (動態記憶版)":
         st.markdown("### ⚙️ 第二步：動態參數篩選 (瞬間完成)")
         df_raw = pd.DataFrame(st.session_state['raw_market_data'])
         
-        # 1. 參數控制區收納與提示
         with st.expander("⚙️ 展開進階參數設定 (點擊展開/收合)", expanded=True):
             c1, c2, c3, c4 = st.columns(4)
             a_ma20 = c1.slider("A策略 MA20 乖離上限(%)", 1.0, 15.0, 5.0, help="限制股價不能離月線太遠，控制追高風險。")
-            b_ma60 = c2.slider("B策略 MA60 乖離上限(%)", 1.0, 20.0, 10.0, help="限制股價不能離季線太遠。")
-            b_vol = c3.slider("B策略 成交量門檻(張)", 500, 10000, 3000, help="過濾掉流動性太差的冷門股。")
-            min_it = c4.number_input("投信買超大於(張)", -10000, 10000, 100, 100, help="跟著投信大哥走，尋找籌碼認養股。")
-
-        df_raw['A條件'] = (df_raw['收盤價'] > df_raw['MA20']) & (((df_raw['收盤價'] - df_raw['MA20']) / df_raw['MA20'] * 100) < a_ma20)
-        df_raw['B條件'] = (df_raw['成交量(張)'] > df_raw['5日均量']) & (df_raw['成交量(張)'] > b_vol) & (((df_raw['收盤價'] - df_raw['MA60']) / df_raw['MA60'] * 100) < b_ma60)
-        df_filtered = df_raw[(df_raw['A條件'] | df_raw['B條件']) & (df_raw['投信買賣超(張)'] >= min_it)].copy()
-
-        if not df_filtered.empty:
-            # 4. 狀態標籤徽章化
-            def format_strategy(row):
-                res = []
-                if row['A條件']: res.append("🟢 A策略")
-                if row['B條件']: res.append("🔥 B策略")
-                return " + ".join(res)
-            
-            df_filtered['符合策略'] = df_filtered.apply(format_strategy, axis=1)
-            df_filtered['MA20乖離(%)'] = round((df_filtered['收盤價'] - df_filtered['MA20']) / df_filtered['MA20'] * 100, 1)
-            df_filtered['建議買區'] = df_filtered['MA20'].apply(lambda x: f"{x:.1f} ~ {x * 1.02:.1f}")
-            df_filtered['停損價'] = round(df_filtered['MA20'] * 0.97, 1)
-            
-            df_display = df_filtered[['代號', '名稱', '收盤價', '符合策略', '投信買賣超(張)', '外資買賣超(張)', 'MA20乖離(%)', '成交量(張)', '建議買區', '停損價']].sort_values(by="投信買賣超(張)", ascending=False)
-            
-            st.markdown("---")
-            # 2. 頂部戰情儀表板
-            st.markdown("### 📊 今日戰情儀表板")
-            m1, m2, m3 = st.columns(3)
-            m1.metric("🎯 符合條件總數", f"{len(df_display)} 檔精銳")
-            top_stock = df_display.iloc[0]
-            m2.metric("🔥 投信買超冠軍", f"{top_stock['名稱']} ({top_stock['代號']})", f"{int(top_stock['投信買賣超(張)'])} 張")
-            m3.metric("📈 最高月線乖離", f"{df_display['MA20乖離(%)'].max()}%")
-            
-            st.markdown("---")
-            st.success("🎯 瞬間篩選完畢！請參考下方精美戰報：")
-            
-            # 3. 數據表格視覺化升級
-            st.dataframe(
-                df_display,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "投信買賣超(張)": st.column_config.ProgressColumn(
-                        "投信買賣超(張)",
-                        help="法人籌碼集中度",
-                        format="%d",
-                        min_value=0,
-                        max_value=int(df_display['投信買賣超(張)'].max()) if df_display['投信買賣超(張)'].max() > 0 else 1000,
-                    ),
-                    "成交量(張)": st.column_config.NumberColumn("成交量(張)", format="%d"),
-                    "外資買賣超(張)": st.column_config.NumberColumn("外資買賣超(張)", format="%d"),
-                    "MA20乖離(%)": st.column_config.NumberColumn("MA20乖離(%)", format="%.1f %%"),
-                    "收盤價": st.column_config.NumberColumn("收盤價", format="%.1f")
-                }
-            )
-
-            st.markdown("---")
-            st.subheader("💾 策略快照建檔 (供未來績效追蹤)")
-            snap_name = st.text_input("為這份名單命名", f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_策略名單")
-            if st.button("💾 儲存此名單為歷史快照"):
-                snap_data = {}
-                if os.path.exists("strategy_snapshots.json"):
-                    try:
-                        with open("strategy_snapshots.json", "r", encoding="utf-8") as f: snap_data = json.load(f)
-                    except: pass
-                snap_data[snap_name] = {
-                    "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "parameters": {"A策略 MA20 乖離上限(%)": a_ma20, "B策略 MA60 乖離上限(%)": b_ma60, "B策略 成交量門檻(張)": b_vol, "投信買超大於(張)": min_it},
-                    "records": df_display[['代號', '名稱', '收盤價', '符合策略']].to_dict('records')
-                }
-                with open("strategy_snapshots.json", "w", encoding="utf-8") as f: json.dump(snap_data, f, ensure_ascii=False, indent=4)
-                st.success(f"✅ 快照 [{snap_name}] 已成功儲存！")
-        else: st.warning("⚠️ 目前參數下沒有符合條件的股票！")
-    
-
-# ==========================================
-# 頁面 2：策略競技場 (V16.1 永久記憶版)
-# ==========================================
-elif page == "📊 策略競技場 (多維度回測)":
-    st.title("⚔️ 策略競技場 (多維度回測與比對)")
-    st.markdown("選擇多個歷史快照進行 A/B 測試。**系統會自動記憶上次的結算結果，無需重複等待！**")
-    
-    SNAP_FILE, CACHE_FILE = "strategy_snapshots.json", "arena_cache.json"
-    if 'arena_cache' not in st.session_state:
-        try:
-            with open(CACHE_FILE, "r", encoding="utf-8") as f: st.session_state['arena_cache'] = json.load(f)
-        except: st.session_state['arena_cache'] = None
-
-    if not os.path.exists(SNAP_FILE): st.warning("⚠️ 目前沒有任何歷史快照。請先到「雷達掃描」頁面儲存快照！")
-    else:
-        with open(SNAP_FILE, "r", encoding="utf-8") as f: snap_data = json.load(f)
-        if not snap_data: st.warning("⚠️ 快照庫為空。")
-        else:
-            sel_snaps = st.multiselect("📂 選擇要追蹤與比對的歷史快照 (可多選)", list(snap_data.keys()), default=list(snap_data.keys())[-1:])
-            
-            if st.button("🚀 強制重新連線結算 (獲取最新股價)"):
-                if not sel_snaps: st.warning("請至少選擇一個快照！")
-                else:
-                    comp_res, all_det = [], {}
-                    pb, st_txt = st.progress(0), st.empty()
-                    tot = sum([len(snap_data[s]["records"]) for s in sel_snaps])
-                    proc = 0
-                    
-                    for s_name in sel_snaps:
-                        data = snap_data[s_name]
-                        s_res = []
-                        for rec in data["records"]:
-                            t, n, ep = rec["代號"], rec["名稱"], rec["收盤價"]
-                            st_txt.text(f"結算 [{s_name}] {t} {n} ...")
-                            yf_t = f"{t}{'.TW' if twstock.codes.get(t) and twstock.codes[t].market == '上市' else '.TWO'}"
-                            try:
-                                df_c = yf.download(yf_t, period="5d", progress=False)
-                                if not df_c.empty:
-                                    if isinstance(df_c.columns, pd.MultiIndex): df_c.columns = df_c.columns.get_level_values(0)
-                                    cp = float(df_c['Close'].iloc[-1])
-                                    s_res.append({"代號": t, "名稱": n, "進場價": ep, "最新價": round(cp, 2), "報酬率(%)": round((cp-ep)/ep*100, 2)})
-                            except: pass
-                            proc += 1
-                            pb.progress(proc / tot)
-                            time.sleep(0.05)
-                            
-                        if s_res:
-                            df_r = pd.DataFrame(s_res)
-                            comp_res.append({"快照名稱": s_name, "建立時間": data["date"], "檔數": len(s_res), "平均報酬率(%)": round(df_r["報酬率(%)"].mean(), 2), "勝率(%)": round(len(df_r[df_r["報酬率(%)"]>0])/len(df_r)*100, 2)})
-                            all_det[s_name] = {"df": df_r.to_dict('records'), "params": data.get("parameters", {})}
-                    
-                    st_txt.empty()
-                    if comp_res:
-                        cd = {"update_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "comparison_results": comp_res, "all_details": all_det}
-                        try:
-                            with open(CACHE_FILE, "w", encoding="utf-8") as f: json.dump(cd, f, ensure_ascii=False, indent=4)
-                            st.session_state['arena_cache'] = cd
-                            st.success("✅ 結算完成！結果已永久儲存。")
-                        except: pass
-
-            if st.session_state.get('arena_cache'):
-                cache = st.session_state['arena_cache']
-                st.info(f"💾 本地快取資料 (最後結算: **{cache['update_time']}**)。")
-                st.markdown("---")
-                st.header("🏆 策略競技場總結算")
-                df_comp = pd.DataFrame(cache["comparison_results"]).sort_values(by="平均報酬率(%)", ascending=False)
-                fig = px.bar(df_comp, x="快照名稱", y="平均報酬率(%)", color="勝率(%)", title="各策略平均報酬率比對", text="平均報酬率(%)", template="plotly_dark", color_continuous_scale="Viridis")
-                st.plotly_chart(fig, use_container_width=True)
-                st.dataframe(df_comp, use_container_width=True)
-                
-                st.markdown("### 📋 各策略詳細配方與明細")
-                for s_name in df_comp["快照名稱"]:
-                    with st.expander(f"📂 展開檢視：{s_name}"):
-                        det = cache["all_details"].get(s_name, {})
-                        st.json(det.get("params", {}))
-                        st.dataframe(pd.DataFrame(det.get("df", [])), use_container_width=True)
-
-# ==========================================
-# 頁面 3：互動 K 線圖
-# ==========================================
-elif page == "📈 互動 K 線圖":
-    st.title("📈 專業互動 K 線圖與均線分析")
-    c1, c2 = st.columns([1, 3])
-    with c1:
-        c_ticker = st.text_input("請輸入股票代號 (例如: 2382)", "3413")
-        c_btn = st.button("📊 繪製線圖")
-        
-    if c_btn and c_ticker:
-        with st.spinner("繪製中..."):
-            ts = f"{c_ticker}{'.TW' if twstock.codes.get(c_ticker) and twstock.codes[c_ticker].market == '上市' else '.TWO'}"
-            try:
-                df = yf.download(ts, period="6mo", progress=False)
-                if df.empty: df = yf.download(f"{c_ticker}{'.TWO' if ts.endswith('.TW') else '.TW'}", period="6mo", progress=False)
-                if not df.empty:
-                    if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
-                    df['MA20'], df['MA60'] = df['Close'].rolling(20).mean(), df['Close'].rolling(60).mean()
-                    fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='K線')])
-                    fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], line=dict(color='orange', width=1.5), name='MA20'))
-                    fig.add_trace(go.Scatter(x=df.index, y=df['MA60'], line=dict(color='blue', width=1.5), name='MA60'))
-                    fig.update_layout(title=f"{get_stock_name(c_ticker)} ({c_ticker}) 近半年技術線圖", yaxis_title='股價', xaxis_rangeslider_visible=False, template='plotly_dark', height=600)
-                    st.plotly_chart(fig, use_container_width=True)
-                else: st.error("找不到資料。")
-            except Exception as e: st.error(f"錯誤: {e}")
+            b_ma60 = c2.slider("B策略 MA60 乖離上限(%)", 1.0, 20.0, 10.0, help="限制股價不能離季線太
 
