@@ -111,25 +111,65 @@ if page == "🔍 雷達掃描 (動態記憶版)":
     if st.session_state.get('raw_market_data'):
         st.markdown("### ⚙️ 第二步：動態參數篩選 (瞬間完成)")
         df_raw = pd.DataFrame(st.session_state['raw_market_data'])
-        c1, c2, c3, c4 = st.columns(4)
-        a_ma20 = c1.slider("A策略 MA20 乖離上限(%)", 1.0, 15.0, 5.0)
-        b_ma60 = c2.slider("B策略 MA60 乖離上限(%)", 1.0, 20.0, 10.0)
-        b_vol = c3.slider("B策略 成交量門檻(張)", 500, 10000, 3000)
-        min_it = c4.number_input("投信買超大於(張)", -10000, 10000, 100, 100)
+        
+        # 1. 參數控制區收納與提示
+        with st.expander("⚙️ 展開進階參數設定 (點擊展開/收合)", expanded=True):
+            c1, c2, c3, c4 = st.columns(4)
+            a_ma20 = c1.slider("A策略 MA20 乖離上限(%)", 1.0, 15.0, 5.0, help="限制股價不能離月線太遠，控制追高風險。")
+            b_ma60 = c2.slider("B策略 MA60 乖離上限(%)", 1.0, 20.0, 10.0, help="限制股價不能離季線太遠。")
+            b_vol = c3.slider("B策略 成交量門檻(張)", 500, 10000, 3000, help="過濾掉流動性太差的冷門股。")
+            min_it = c4.number_input("投信買超大於(張)", -10000, 10000, 100, 100, help="跟著投信大哥走，尋找籌碼認養股。")
 
         df_raw['A條件'] = (df_raw['收盤價'] > df_raw['MA20']) & (((df_raw['收盤價'] - df_raw['MA20']) / df_raw['MA20'] * 100) < a_ma20)
         df_raw['B條件'] = (df_raw['成交量(張)'] > df_raw['5日均量']) & (df_raw['成交量(張)'] > b_vol) & (((df_raw['收盤價'] - df_raw['MA60']) / df_raw['MA60'] * 100) < b_ma60)
         df_filtered = df_raw[(df_raw['A條件'] | df_raw['B條件']) & (df_raw['投信買賣超(張)'] >= min_it)].copy()
 
         if not df_filtered.empty:
-            df_filtered['符合策略'] = df_filtered.apply(lambda x: "+".join([s for s, cond in zip(["A策略", "B策略"], [x['A條件'], x['B條件']]) if cond]), axis=1)
+            # 4. 狀態標籤徽章化
+            def format_strategy(row):
+                res = []
+                if row['A條件']: res.append("🟢 A策略")
+                if row['B條件']: res.append("🔥 B策略")
+                return " + ".join(res)
+            
+            df_filtered['符合策略'] = df_filtered.apply(format_strategy, axis=1)
             df_filtered['MA20乖離(%)'] = round((df_filtered['收盤價'] - df_filtered['MA20']) / df_filtered['MA20'] * 100, 1)
             df_filtered['建議買區'] = df_filtered['MA20'].apply(lambda x: f"{x:.1f} ~ {x * 1.02:.1f}")
             df_filtered['停損價'] = round(df_filtered['MA20'] * 0.97, 1)
             
             df_display = df_filtered[['代號', '名稱', '收盤價', '符合策略', '投信買賣超(張)', '外資買賣超(張)', 'MA20乖離(%)', '成交量(張)', '建議買區', '停損價']].sort_values(by="投信買賣超(張)", ascending=False)
-            st.success(f"🎯 瞬間篩選完畢！符合條件共 **{len(df_display)}** 檔精銳。")
-            st.dataframe(df_display, use_container_width=True)
+            
+            st.markdown("---")
+            # 2. 頂部戰情儀表板
+            st.markdown("### 📊 今日戰情儀表板")
+            m1, m2, m3 = st.columns(3)
+            m1.metric("🎯 符合條件總數", f"{len(df_display)} 檔精銳")
+            top_stock = df_display.iloc[0]
+            m2.metric("🔥 投信買超冠軍", f"{top_stock['名稱']} ({top_stock['代號']})", f"{int(top_stock['投信買賣超(張)'])} 張")
+            m3.metric("📈 最高月線乖離", f"{df_display['MA20乖離(%)'].max()}%")
+            
+            st.markdown("---")
+            st.success("🎯 瞬間篩選完畢！請參考下方精美戰報：")
+            
+            # 3. 數據表格視覺化升級
+            st.dataframe(
+                df_display,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "投信買賣超(張)": st.column_config.ProgressColumn(
+                        "投信買賣超(張)",
+                        help="法人籌碼集中度",
+                        format="%d",
+                        min_value=0,
+                        max_value=int(df_display['投信買賣超(張)'].max()) if df_display['投信買賣超(張)'].max() > 0 else 1000,
+                    ),
+                    "成交量(張)": st.column_config.NumberColumn("成交量(張)", format="%d"),
+                    "外資買賣超(張)": st.column_config.NumberColumn("外資買賣超(張)", format="%d"),
+                    "MA20乖離(%)": st.column_config.NumberColumn("MA20乖離(%)", format="%.1f %%"),
+                    "收盤價": st.column_config.NumberColumn("收盤價", format="%.1f")
+                }
+            )
 
             st.markdown("---")
             st.subheader("💾 策略快照建檔 (供未來績效追蹤)")
@@ -148,6 +188,7 @@ if page == "🔍 雷達掃描 (動態記憶版)":
                 with open("strategy_snapshots.json", "w", encoding="utf-8") as f: json.dump(snap_data, f, ensure_ascii=False, indent=4)
                 st.success(f"✅ 快照 [{snap_name}] 已成功儲存！")
         else: st.warning("⚠️ 目前參數下沒有符合條件的股票！")
+    
 
 # ==========================================
 # 頁面 2：策略競技場 (V16.1 永久記憶版)
