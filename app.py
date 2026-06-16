@@ -144,36 +144,41 @@ elif page == "🔍 雷達掃描 (白箱解析)":
     # 顯示篩選器與結果
     if st.session_state['scan_results']:
         st.markdown("---")
-        st.markdown("### 🎯 掃描結果二次篩選")
+        st.markdown("### 🎯 掃描結果二次篩選 (精準狙擊)")
         df_all = pd.DataFrame(st.session_state['scan_results'])
         
-        col_f1, col_f2, col_f3 = st.columns(3)
-        min_score = col_f1.number_input("最低綜合評分 (建議 65 以上)", min_value=0, max_value=100, value=65, step=5)
+        col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+        min_score = col_f1.number_input("最低綜合評分", min_value=0, max_value=100, value=80, step=5)
         target_status = col_f2.multiselect("狀態篩選", ["🟢 可佈局", "🟡 觀察等待"], default=["🟢 可佈局"])
-        target_strategy = col_f3.multiselect("策略篩選", ["A策略", "B策略", "A策略+B策略"], default=["A策略", "B策略", "A策略+B策略"])
+        sort_by = col_f3.selectbox("優先排序方式", ["成交量(張) (由大到小)", "MA20乖離(%) (由小到大)", "綜合評分 (由高到低)"])
+        top_n = col_f4.number_input("只抓取前 N 檔 (最多15)", min_value=1, max_value=15, value=5)
 
         # 執行篩選
         df_filtered = df_all[
             (df_all['分數數值'] >= min_score) & 
-            (df_all['狀態'].isin(target_status)) & 
-            (df_all['符合策略'].isin(target_strategy))
-        ].drop(columns=['分數數值']) # 隱藏數值欄位
+            (df_all['狀態'].isin(target_status))
+        ].copy()
 
-        st.success(f"篩選後剩下 **{len(df_filtered)}** 檔精銳標的！")
-        st.dataframe(df_filtered, use_container_width=True)
+        # 執行排序
+        if "成交量" in sort_by:
+            df_filtered = df_filtered.sort_values(by="成交量(張)", ascending=False)
+        elif "乖離" in sort_by:
+            df_filtered = df_filtered.sort_values(by="MA20乖離(%)", ascending=True)
+        else:
+            df_filtered = df_filtered.sort_values(by="分數數值", ascending=False)
+
+        df_filtered = df_filtered.drop(columns=['分數數值']) # 隱藏數值欄位
+        
+        export_df = df_filtered.head(top_n)
+        st.success(f"符合條件共 {len(df_filtered)} 檔，目前為您顯示並抓取排名前 **{len(export_df)}** 檔精銳！")
+        st.dataframe(export_df, use_container_width=True)
 
         col_dl, col_copy = st.columns(2)
         with col_dl:
-            st.download_button("📥 下載篩選後 CSV", data=df_filtered.to_csv(index=False).encode('utf-8-sig'), file_name="hios_filtered_radar.csv", mime="text/csv")
+            st.download_button("📥 下載完整篩選名單", data=df_filtered.to_csv(index=False).encode('utf-8-sig'), file_name="hios_filtered.csv", mime="text/csv")
         with col_copy:
-            if st.button("🤖 將篩選結果產生 Manus 分析指令 (一鍵複製)"):
-                if len(df_filtered) > 15:
-                    st.warning("⚠️ 篩選結果超過 15 檔，為確保 AI 分析品質，僅抓取前 15 檔生成指令。建議您提高最低評分！")
-                    export_df = df_filtered.head(15)
-                else:
-                    export_df = df_filtered
-
-                report = "Manus 指揮官呼叫！以下是我透過雷達掃描並嚴格篩選出的精銳名單，請幫我進行即時聯網分析：\n\n"
+            if st.button("🤖 將這幾檔產生 Manus 分析指令 (一鍵複製)"):
+                report = "Manus 指揮官呼叫！以下是我透過雷達嚴格篩選出的【Top 精銳名單】，請幫我進行即時聯網分析：\n\n"
                 for _, row in export_df.iterrows():
                     report += f"### {row['代號']} {row['名稱']} (評分: {row['綜合評分']})\n"
                     report += f"- **符合**: {row['符合策略']} | **狀態**: {row['狀態']}\n"
@@ -183,10 +188,11 @@ elif page == "🔍 雷達掃描 (白箱解析)":
                 report += "---\n**【Manus 任務指令】**\n"
                 report += "1. 請聯網查詢這幾檔股票「今日的即時報價與走勢」，確認是否還在建議買區內，有無爆量跌破風險。\n"
                 report += "2. 查詢近期的「法人籌碼動向」與「基本面題材」。\n"
-                report += "3. 幫我從中挑選出 1~2 檔最適合明天動用 50 萬資金試單的標的，並給出具體理由！"
+                report += "3. 幫我從中挑選出 1 檔最適合明天動用 50 萬資金試單的標的，並給出具體理由！"
                 
                 st.success("✅ 指令已生成！請點擊下方複製圖示貼給 Manus。")
                 st.code(report, language="markdown")
+
 
 # ==========================================
 # 頁面 3：股票池管理 (超級 AI 協作)
