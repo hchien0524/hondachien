@@ -8,7 +8,7 @@ import plotly.express as px
 
 st.set_page_config(page_title="HIOS 波段雷達", layout="wide", page_icon="🚀")
 
-st.sidebar.title("HIOS 旗艦系統 V9.1")
+st.sidebar.title("HIOS 旗艦系統 V9.2")
 page = st.sidebar.radio("請選擇功能模組：", [
     "🌍 市場環境 (資金流向)", "🔍 雷達掃描 (綜合評分)", "🗂️ 股票池管理 (AI協作)", 
     "🛡️ 持股防護罩 (健檢)", "📊 績效與交易紀錄", "📈 互動 K 線圖 (分析)"
@@ -164,7 +164,12 @@ elif page == "🗂️ 股票池管理 (AI協作)":
         if st.button("🤖 產生 Manus 分析報告 (一鍵複製)"):
             report = "Manus 指揮官呼叫，請幫我針對以下《核心股票池》的標的進行深度分析：\n\n"
             for _, row in edited_pool.iterrows():
-                report += f"### {row['代號']} {row['名稱']} [{row['級別']}]\n- **追蹤筆記**：{row['追蹤筆記']}\n\n"
+                # 完美防呆：使用 .get() 確保即使欄位不存在也不會報錯
+                c_code = row.get('代號', '未知代號')
+                c_name = row.get('名稱', '')
+                c_level = row.get('級別', '未分類')
+                c_note = row.get('追蹤筆記', '無筆記')
+                report += f"### {c_code} {c_name} [{c_level}]\n- **追蹤筆記**：{c_note}\n\n"
             report += "---\n請用專業客觀的角度，輔助我說明我少看的論點，並給我指導。"
             st.success("✅ 報告已生成！請點擊下方複製圖示貼給 Manus。")
             st.code(report, language="markdown")
@@ -181,7 +186,7 @@ elif page == "🛡️ 持股防護罩 (健檢)":
     if st.button("🛡️ 啟動持股健檢"):
         results, alerts, progress_text = [], [], st.empty()
         for _, row in edited_df.iterrows():
-            code, cost = str(row['股票代號']).strip(), float(row['成本價'])
+            code, cost = str(row.get('股票代號', '')).strip(), float(row.get('成本價', 0))
             if not code: continue
             progress_text.text(f"正在健檢 {code} ...")
             ticker = f"{code}{'.TW' if twstock.codes.get(code) and twstock.codes[code].market == '上市' else '.TWO'}"
