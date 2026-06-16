@@ -8,21 +8,16 @@ import plotly.express as px
 
 st.set_page_config(page_title="HIOS 波段雷達", layout="wide", page_icon="🚀")
 
-st.sidebar.title("HIOS 旗艦系統 V9.0")
+st.sidebar.title("HIOS 旗艦系統 V9.1")
 page = st.sidebar.radio("請選擇功能模組：", [
-    "🌍 市場環境 (資金流向)", 
-    "🔍 雷達掃描 (綜合評分)", 
-    "🗂️ 股票池管理 (AI協作)",   # 升級
-    "🛡️ 持股防護罩 (健檢)",
-    "📊 績效與交易紀錄",        # 升級
-    "📈 互動 K 線圖 (分析)"
+    "🌍 市場環境 (資金流向)", "🔍 雷達掃描 (綜合評分)", "🗂️ 股票池管理 (AI協作)", 
+    "🛡️ 持股防護罩 (健檢)", "📊 績效與交易紀錄", "📈 互動 K 線圖 (分析)"
 ])
 st.sidebar.markdown("---")
 
 @st.cache_data
 def get_stock_name(pure_code):
-    if pure_code in twstock.codes: return twstock.codes[pure_code].name
-    return "未知"
+    return twstock.codes[pure_code].name if pure_code in twstock.codes else "未知"
 
 # ==========================================
 # 頁面 1：市場環境
@@ -43,8 +38,7 @@ if page == "🌍 市場環境 (資金流向)":
 
     with st.spinner("正在載入市場數據..."):
         st.subheader("🇺🇸 全球總經天氣")
-        macro_symbols = {"S&P 500": "^GSPC", "那斯達克": "^IXIC", "費城半導體": "^SOX", "VIX 恐慌指數": "^VIX", "美債10年殖利率": "^TNX"}
-        macro_data = get_market_data(macro_symbols)
+        macro_data = get_market_data({"S&P 500": "^GSPC", "那斯達克": "^IXIC", "費城半導體": "^SOX", "VIX 恐慌指數": "^VIX", "美債10年殖利率": "^TNX"})
         cols1 = st.columns(5)
         for i, (name, metrics) in enumerate(macro_data.items()):
             with cols1[i]:
@@ -55,8 +49,7 @@ if page == "🌍 市場環境 (資金流向)":
         
         st.markdown("---")
         st.subheader("🇹🇼 台股資金風向球 (板塊輪動)")
-        tw_symbols = {"加權指數 (大盤)": "^TWII", "櫃買指數 (中小型)": "^TWOII", "0050 (大型權值)": "0050.TW", "00881 (5G半導體)": "00881.TW", "00878 (高股息避險)": "00878.TW"}
-        tw_data = get_market_data(tw_symbols)
+        tw_data = get_market_data({"加權指數 (大盤)": "^TWII", "櫃買指數 (中小型)": "^TWOII", "0050 (大型權值)": "0050.TW", "00881 (5G半導體)": "00881.TW", "00878 (高股息避險)": "00878.TW"})
         cols2 = st.columns(5)
         for i, (name, metrics) in enumerate(tw_data.items()):
             with cols2[i]:
@@ -112,8 +105,7 @@ elif page == "🔍 雷達掃描 (綜合評分)":
                 delta = df['Close'].diff()
                 gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
                 loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-                rs = gain / loss
-                df['RSI'] = 100 - (100 / (1 + rs))
+                df['RSI'] = 100 - (100 / (1 + gain / loss))
                 
                 latest = df.iloc[-1]
                 c, m20, m60, v, vm5, rsi = float(latest['Close']), float(latest['MA20']), float(latest['MA60']), float(latest['Vol']), float(latest['Vol_MA5']), float(latest['RSI'])
@@ -122,15 +114,9 @@ elif page == "🔍 雷達掃描 (綜合評分)":
                 b_cond = (v > vm5) and (v > b_vol_min) and (((c - m60) / m60 * 100) < b_ma60_bias)
                 
                 if a_cond or b_cond:
-                    score = 30
-                    if c > m20: score += 15
-                    if m20 > m60: score += 20
-                    if v > (vm5 * 2): score += 15
-                    if 50 <= rsi <= 75: score += 20
-                    stars = "🌟" * (score // 20)
-                    
+                    score = 30 + (15 if c > m20 else 0) + (20 if m20 > m60 else 0) + (15 if v > (vm5 * 2) else 0) + (20 if 50 <= rsi <= 75 else 0)
                     results.append({
-                        "代號": pure_code, "名稱": current_name, "收盤價": round(c, 1), "綜合評分": f"{score}分 {stars}",
+                        "代號": pure_code, "名稱": current_name, "收盤價": round(c, 1), "綜合評分": f"{score}分 {'🌟' * (score // 20)}",
                         "符合策略": "+".join([s for s, cond in zip(["A策略", "B策略"], [a_cond, b_cond]) if cond]),
                         "MA20乖離(%)": round((c - m20) / m20 * 100, 1), "成交量(張)": int(v),
                         "建議買區": f"{m20:.1f} ~ {m20 * 1.02:.1f}", "停損價": round(m20 * 0.97, 1), "目標價": round(c * 1.15, 1),
@@ -142,61 +128,45 @@ elif page == "🔍 雷達掃描 (綜合評分)":
 
         status_text.text(f"掃描完成！共找出 {len(results)} 檔標的。")
         if results:
-            columns_order = ["代號", "名稱", "收盤價", "綜合評分", "符合策略", "MA20乖離(%)", "成交量(張)", "建議買區", "停損價", "目標價", "狀態", "警示"]
-            df_res = pd.DataFrame(results)[columns_order]
+            df_res = pd.DataFrame(results)[["代號", "名稱", "收盤價", "綜合評分", "符合策略", "MA20乖離(%)", "成交量(張)", "建議買區", "停損價", "目標價", "狀態", "警示"]]
             st.dataframe(df_res, use_container_width=True)
-            csv_bytes = df_res.to_csv(index=False).encode('utf-8-sig')
-            st.download_button(label="📥 下載 CSV 報表", data=csv_bytes, file_name="hios_radar_report.csv", mime="text/csv")
+            st.download_button("📥 下載 CSV 報表", data=df_res.to_csv(index=False).encode('utf-8-sig'), file_name="hios_radar.csv", mime="text/csv")
         else: st.info("目前沒有符合條件的標的。")
 
 # ==========================================
-# 頁面 3：股票池管理 (新增名稱與 Manus 匯出)
+# 頁面 3：股票池管理 (AI協作)
 # ==========================================
 elif page == "🗂️ 股票池管理 (AI協作)":
     st.title("🗂️ 核心股票池管理與 AI 協作")
-    st.markdown("將雷達掃描出的潛力標的加入此處。您可以將資料匯出存檔，或一鍵複製給 Manus 進行深度分析。")
     
-    # 讀取存檔功能
-    uploaded_pool = st.file_uploader("📤 讀取股票池存檔 (CSV)", type=["csv"], key="pool_uploader")
+    uploaded_pool = st.file_uploader("📤 讀取股票池存檔 (CSV)", type=["csv"])
     if uploaded_pool is not None:
         st.session_state['stock_pool'] = pd.read_csv(uploaded_pool)
         st.success("✅ 股票池存檔讀取成功！")
 
     if 'stock_pool' not in st.session_state:
         st.session_state['stock_pool'] = pd.DataFrame({
-            "代號": ["3413", "3015", "8210"],
-            "名稱": ["京鼎", "全漢", "勤誠"],
-            "級別": ["A級核心池", "B級核心池", "觀察池"],
-            "追蹤筆記": ["投信連買3日，乖離極低，準備50萬試單", "股本小，昨日爆量突破季線", "回測月線有守，等待大盤點火"]
+            "代號": ["3413", "3015"], "名稱": ["京鼎", "全漢"], "級別": ["A級核心池", "B級核心池"],
+            "追蹤筆記": ["投信連買3日，乖離極低，準備50萬試單", "股本小，昨日爆量突破季線"]
         })
     
     edited_pool = st.data_editor(
-        st.session_state['stock_pool'], 
-        num_rows="dynamic", 
-        use_container_width=True,
-        column_config={
-            "級別": st.column_config.SelectboxColumn("級別", options=["A級核心池", "B級核心池", "觀察池"], required=True),
-            "追蹤筆記": st.column_config.TextColumn("追蹤筆記 (可詳細記錄籌碼與戰略)", width="large")
-        }
+        st.session_state['stock_pool'], num_rows="dynamic", use_container_width=True,
+        column_config={"級別": st.column_config.SelectboxColumn("級別", options=["A級核心池", "B級核心池", "觀察池"], required=True),
+                       "追蹤筆記": st.column_config.TextColumn("追蹤筆記", width="large")}
     )
     st.session_state['stock_pool'] = edited_pool
 
     col1, col2 = st.columns(2)
     with col1:
-        # 下載存檔功能
-        csv_pool = edited_pool.to_csv(index=False).encode('utf-8-sig')
-        st.download_button(label="📥 下載股票池存檔 (CSV)", data=csv_pool, file_name="hios_stock_pool.csv", mime="text/csv")
-    
+        st.download_button("📥 下載股票池存檔 (CSV)", data=edited_pool.to_csv(index=False).encode('utf-8-sig'), file_name="hios_pool.csv", mime="text/csv")
     with col2:
-        # 產生 Manus 分析報告
-        if st.button("🤖 產生 Manus 專屬分析報告 (一鍵複製)"):
-            report = "Manus 指揮官呼叫，請幫我針對以下《核心股票池》的標的進行深度籌碼與技術面分析，並給出明日的作戰建議：\n\n"
-            for idx, row in edited_pool.iterrows():
-                report += f"### {row['代號']} {row['名稱']} [{row['級別']}]\n"
-                report += f"- **我的追蹤筆記**：{row['追蹤筆記']}\n\n"
+        if st.button("🤖 產生 Manus 分析報告 (一鍵複製)"):
+            report = "Manus 指揮官呼叫，請幫我針對以下《核心股票池》的標的進行深度分析：\n\n"
+            for _, row in edited_pool.iterrows():
+                report += f"### {row['代號']} {row['名稱']} [{row['級別']}]\n- **追蹤筆記**：{row['追蹤筆記']}\n\n"
             report += "---\n請用專業客觀的角度，輔助我說明我少看的論點，並給我指導。"
-            
-            st.success("✅ 報告已生成！請點擊下方黑色區塊右上角的「複製」圖示，貼給 Manus。")
+            st.success("✅ 報告已生成！請點擊下方複製圖示貼給 Manus。")
             st.code(report, language="markdown")
 
 # ==========================================
@@ -214,8 +184,7 @@ elif page == "🛡️ 持股防護罩 (健檢)":
             code, cost = str(row['股票代號']).strip(), float(row['成本價'])
             if not code: continue
             progress_text.text(f"正在健檢 {code} ...")
-            market = twstock.codes.get(code, None)
-            ticker = f"{code}{'.TW' if market and market.market == '上市' else '.TWO'}"
+            ticker = f"{code}{'.TW' if twstock.codes.get(code) and twstock.codes[code].market == '上市' else '.TWO'}"
             try:
                 df = yf.download(ticker, period="1mo", progress=False)
                 if df.empty: df = yf.download(f"{code}{'.TWO' if ticker.endswith('.TW') else '.TW'}", period="1mo", progress=False)
@@ -229,7 +198,6 @@ elif page == "🛡️ 持股防護罩 (健檢)":
                 if c < m20: status, action = "🔴 破線警示", "已跌破月線，建議減碼！"; alerts.append(f"⚠️ **{name}** 跌破月線 ({m20:.1f})！")
                 elif roi <= -3.0: status, action = "🔴 停損警示", "虧損達 3%，觸發停損！"; alerts.append(f"⚠️ **{name}** 虧損達 {roi:.1f}%！")
                 elif roi >= 15.0: status, action = "🟢 停利提示", "獲利達標，可分批停利"; alerts.append(f"🎉 **{name}** 獲利達 {roi:.1f}%！")
-
                 results.append({"代號": code, "名稱": name, "成本價": cost, "最新收盤價": round(c, 1), "月線": round(m20, 1), "報酬率(%)": round(roi, 1), "狀態": status, "建議": action})
             except: pass
         progress_text.empty()
@@ -240,71 +208,48 @@ elif page == "🛡️ 持股防護罩 (健檢)":
         if results: st.dataframe(pd.DataFrame(results), use_container_width=True)
 
 # ==========================================
-# 頁面 5：績效與交易紀錄 (新增存檔功能)
+# 頁面 5：績效與交易紀錄
 # ==========================================
 elif page == "📊 績效與交易紀錄":
     st.title("📊 交易紀錄與績效儀表板")
-    st.markdown("記錄您的實戰軌跡。**請務必在關閉網頁前點擊「下載存檔」，下次開啟時再「讀取存檔」。**")
     
-    # 讀取存檔功能
-    uploaded_trades = st.file_uploader("📤 讀取交易紀錄存檔 (CSV)", type=["csv"], key="trade_uploader")
+    uploaded_trades = st.file_uploader("📤 讀取交易紀錄存檔 (CSV)", type=["csv"])
     if uploaded_trades is not None:
         st.session_state['trade_records'] = pd.read_csv(uploaded_trades)
         st.success("✅ 交易紀錄讀取成功！")
 
     if 'trade_records' not in st.session_state:
         st.session_state['trade_records'] = pd.DataFrame({
-            "代號": ["2382", "3231", "2379", "3035", "8299"],
-            "策略": ["A策略", "A策略", "B策略", "B策略", "B策略"],
-            "出場日": ["2026/05/10", "2026/05/05", "2026/06/02", "2026/06/10", "2026/05/25"],
-            "進場價": [285.0, 82.0, 498.0, 228.0, 342.0],
-            "出場價": [268.0, 96.0, 545.0, 245.0, 318.0],
-            "股數": [1000, 2000, 1000, 1000, 1000]
+            "代號": ["2382", "3231", "2379"], "策略": ["A策略", "A策略", "B策略"],
+            "出場日": ["2026/05/10", "2026/05/05", "2026/06/02"],
+            "進場價": [285.0, 82.0, 498.0], "出場價": [268.0, 96.0, 545.0], "股數": [1000, 2000, 1000]
         })
 
-    st.markdown("### 📝 歷史交易明細")
     edited_trades = st.data_editor(
-        st.session_state['trade_records'], 
-        num_rows="dynamic", 
-        use_container_width=True,
-        column_config={
-            "策略": st.column_config.SelectboxColumn("策略", options=["A策略", "B策略"], required=True)
-        }
+        st.session_state['trade_records'], num_rows="dynamic", use_container_width=True,
+        column_config={"策略": st.column_config.SelectboxColumn("策略", options=["A策略", "B策略"], required=True)}
     )
     st.session_state['trade_records'] = edited_trades
+    st.download_button("📥 下載交易紀錄存檔 (CSV)", data=edited_trades.to_csv(index=False).encode('utf-8-sig'), file_name="hios_trades.csv", mime="text/csv")
 
-    # 下載存檔功能
-    csv_trades = edited_trades.to_csv(index=False).encode('utf-8-sig')
-    st.download_button(label="📥 下載交易紀錄存檔 (CSV)", data=csv_trades, file_name="hios_trade_records.csv", mime="text/csv")
-
-    # 計算績效數據
     df_trades = edited_trades.copy()
     if not df_trades.empty:
         df_trades['損益金額'] = (df_trades['出場價'] - df_trades['進場價']) * df_trades['股數']
-        df_trades['報酬率(%)'] = ((df_trades['出場價'] - df_trades['進場價']) / df_trades['進場價']) * 100
-        df_trades['獲利'] = df_trades['損益金額'] > 0
-        
-        total_trades = len(df_trades)
-        win_trades = len(df_trades[df_trades['獲利'] == True])
+        total_trades, win_trades = len(df_trades), len(df_trades[df_trades['損益金額'] > 0])
         win_rate = (win_trades / total_trades) * 100 if total_trades > 0 else 0
         total_profit = df_trades['損益金額'].sum()
 
         st.markdown("---")
-        st.markdown("### 🏆 績效總覽")
         col1, col2, col3 = st.columns(3)
         col1.metric("總交易次數", f"{total_trades} 次")
         col2.metric("整體勝率", f"{win_rate:.1f} %")
         col3.metric("累積總損益", f"{total_profit:,.0f} 元", delta="獲利" if total_profit > 0 else "虧損")
 
-        st.markdown("### 📈 累積損益曲線")
         df_trades = df_trades.sort_values(by="出場日")
         df_trades['累積損益'] = df_trades['損益金額'].cumsum()
-        
         fig = px.line(df_trades, x="出場日", y="累積損益", markers=True, title="資金成長曲線", template="plotly_dark")
         fig.update_traces(line_color='#00FF00' if total_profit >= 0 else '#FF0000', line_width=3, marker=dict(size=8))
         st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("目前尚無交易紀錄，請在上方表格新增資料。")
 
 # ==========================================
 # 頁面 6：互動 K 線圖
@@ -318,8 +263,7 @@ elif page == "📈 互動 K 線圖 (分析)":
         
     if chart_btn and chart_ticker:
         with st.spinner("正在繪製圖表..."):
-            market = twstock.codes.get(chart_ticker, None)
-            ticker_symbol = f"{chart_ticker}{'.TW' if market and market.market == '上市' else '.TWO'}"
+            ticker_symbol = f"{chart_ticker}{'.TW' if twstock.codes.get(chart_ticker) and twstock.codes[chart_ticker].market == '上市' else '.TWO'}"
             name = get_stock_name(chart_ticker)
             try:
                 df = yf.download(ticker_symbol, period="6mo", progress=False)
@@ -332,4 +276,5 @@ elif page == "📈 互動 K 線圖 (分析)":
                     fig.add_trace(go.Scatter(x=df.index, y=df['MA60'], line=dict(color='blue', width=1.5), name='季線 (MA60)'))
                     fig.update_layout(title=f"{name} ({chart_ticker}) 近半年技術線圖", yaxis_title='股價 (元)', xaxis_rangeslider_visible=False, template='plotly_dark', height=600)
                     st.plotly_chart(fig, use_container_width=True)
-                
+                else: st.error("找不到該檔股票的資料。")
+            except Exception as e: st.error(f"繪圖發生錯誤: {e}")
