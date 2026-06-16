@@ -60,7 +60,7 @@ if page == "🌍 市場環境 (資金流向)":
 # 頁面 2：雷達掃描 (新增評分明細)
 # ==========================================
 elif page == "🔍 雷達掃描 (白箱解析)":
-    st.title("🚀 HIOS 波段雷達 (白箱解析版)")
+    st.title("🚀 HIOS 波段雷達 (進階篩選版)")
     
     @st.cache_data
     def get_market_tickers(market_type):
@@ -79,7 +79,10 @@ elif page == "🔍 雷達掃描 (白箱解析)":
     b_ma60_bias = st.sidebar.slider("B策略 MA60 正乖離上限 (%)", 1.0, 20.0, 10.0)
     b_vol_min = st.sidebar.slider("B策略 成交量門檻 (張)", 500, 10000, 3000)
 
-    if st.button("🚀 啟動掃描"):
+    if 'scan_results' not in st.session_state:
+        st.session_state['scan_results'] = []
+
+    if st.button("🚀 啟動全市場掃描"):
         target_tickers, stock_names_dict = [], {}
         if scan_mode == "自選股 (快速)":
             for t in [x.strip() for x in tickers_input.split(",")]:
@@ -114,7 +117,6 @@ elif page == "🔍 雷達掃描 (白箱解析)":
                 b_cond = (v > vm5) and (v > b_vol_min) and (((c - m60) / m60 * 100) < b_ma60_bias)
                 
                 if a_cond or b_cond:
-                    # 白箱解析：記錄加分原因
                     score = 30
                     details = []
                     if c > m20: score += 15; details.append("站上月線")
@@ -124,8 +126,9 @@ elif page == "🔍 雷達掃描 (白箱解析)":
                     
                     results.append({
                         "代號": pure_code, "名稱": current_name, "收盤價": round(c, 1), 
+                        "分數數值": score, # 隱藏欄位，用於篩選
                         "綜合評分": f"{score}分 {'🌟' * (score // 20)}",
-                        "評分明細": " + ".join(details), # 新增欄位
+                        "評分明細": " + ".join(details),
                         "符合策略": "+".join([s for s, cond in zip(["A策略", "B策略"], [a_cond, b_cond]) if cond]),
                         "MA20乖離(%)": round((c - m20) / m20 * 100, 1), "成交量(張)": int(v),
                         "建議買區": f"{m20:.1f} ~ {m20 * 1.02:.1f}", "停損價": round(m20 * 0.97, 1), "目標價": round(c * 1.15, 1),
@@ -135,12 +138,55 @@ elif page == "🔍 雷達掃描 (白箱解析)":
             time.sleep(0.2)
             progress_bar.progress((i + 1) / len(target_tickers))
 
-        status_text.text(f"掃描完成！共找出 {len(results)} 檔標的。")
-        if results:
-            df_res = pd.DataFrame(results)[["代號", "名稱", "收盤價", "綜合評分", "評分明細", "符合策略", "MA20乖離(%)", "成交量(張)", "建議買區", "停損價", "目標價", "狀態", "警示"]]
-            st.dataframe(df_res, use_container_width=True)
-            st.download_button("📥 下載 CSV 報表", data=df_res.to_csv(index=False).encode('utf-8-sig'), file_name="hios_radar.csv", mime="text/csv")
-        else: st.info("目前沒有符合條件的標的。")
+        st.session_state['scan_results'] = results
+        status_text.text(f"掃描完成！共找出 {len(results)} 檔初步符合條件的標的。")
+
+    # 顯示篩選器與結果
+    if st.session_state['scan_results']:
+        st.markdown("---")
+        st.markdown("### 🎯 掃描結果二次篩選")
+        df_all = pd.DataFrame(st.session_state['scan_results'])
+        
+        col_f1, col_f2, col_f3 = st.columns(3)
+        min_score = col_f1.number_input("最低綜合評分 (建議 65 以上)", min_value=0, max_value=100, value=65, step=5)
+        target_status = col_f2.multiselect("狀態篩選", ["🟢 可佈局", "🟡 觀察等待"], default=["🟢 可佈局"])
+        target_strategy = col_f3.multiselect("策略篩選", ["A策略", "B策略", "A策略+B策略"], default=["A策略", "B策略", "A策略+B策略"])
+
+        # 執行篩選
+        df_filtered = df_all[
+            (df_all['分數數值'] >= min_score) & 
+            (df_all['狀態'].isin(target_status)) & 
+            (df_all['符合策略'].isin(target_strategy))
+        ].drop(columns=['分數數值']) # 隱藏數值欄位
+
+        st.success(f"篩選後剩下 **{len(df_filtered)}** 檔精銳標的！")
+        st.dataframe(df_filtered, use_container_width=True)
+
+        col_dl, col_copy = st.columns(2)
+        with col_dl:
+            st.download_button("📥 下載篩選後 CSV", data=df_filtered.to_csv(index=False).encode('utf-8-sig'), file_name="hios_filtered_radar.csv", mime="text/csv")
+        with col_copy:
+            if st.button("🤖 將篩選結果產生 Manus 分析指令 (一鍵複製)"):
+                if len(df_filtered) > 15:
+                    st.warning("⚠️ 篩選結果超過 15 檔，為確保 AI 分析品質，僅抓取前 15 檔生成指令。建議您提高最低評分！")
+                    export_df = df_filtered.head(15)
+                else:
+                    export_df = df_filtered
+
+                report = "Manus 指揮官呼叫！以下是我透過雷達掃描並嚴格篩選出的精銳名單，請幫我進行即時聯網分析：\n\n"
+                for _, row in export_df.iterrows():
+                    report += f"### {row['代號']} {row['名稱']} (評分: {row['綜合評分']})\n"
+                    report += f"- **符合**: {row['符合策略']} | **狀態**: {row['狀態']}\n"
+                    report += f"- **技術亮點**: {row['評分明細']}\n"
+                    report += f"- **建議買區**: {row['建議買區']} | **停損價**: {row['停損價']}\n\n"
+                
+                report += "---\n**【Manus 任務指令】**\n"
+                report += "1. 請聯網查詢這幾檔股票「今日的即時報價與走勢」，確認是否還在建議買區內，有無爆量跌破風險。\n"
+                report += "2. 查詢近期的「法人籌碼動向」與「基本面題材」。\n"
+                report += "3. 幫我從中挑選出 1~2 檔最適合明天動用 50 萬資金試單的標的，並給出具體理由！"
+                
+                st.success("✅ 指令已生成！請點擊下方複製圖示貼給 Manus。")
+                st.code(report, language="markdown")
 
 # ==========================================
 # 頁面 3：股票池管理 (超級 AI 協作)
