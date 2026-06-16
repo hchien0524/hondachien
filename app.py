@@ -12,9 +12,8 @@ import plotly.graph_objects as go
 # ==========================================
 # 系統初始化與版面設定
 # ==========================================
-st.set_page_config(page_title="HIOS 波段雷達 V15.0", layout="wide")
+st.set_page_config(page_title="HIOS 波段雷達 V15.1", layout="wide")
 
-# 側邊欄導覽
 st.sidebar.title("🚀 HIOS 系統導覽")
 page = st.sidebar.radio("功能模組", [
     "🔍 雷達掃描 (動態記憶版)",
@@ -27,14 +26,13 @@ def get_stock_name(code):
     return "未知"
 
 # ==========================================
-# 頁面 1：雷達掃描 (V14.0 記憶引擎 + V15.0 快照)
+# 頁面 1：雷達掃描 (V15.1 參數記憶快照)
 # ==========================================
 if page == "🔍 雷達掃描 (動態記憶版)":
-    st.title("🚀 HIOS 波段雷達 (V15.0 旗艦版)")
+    st.title("🚀 HIOS 波段雷達 (V15.1 參數記憶版)")
     
     CACHE_FILE = "market_data_cache.json"
 
-    # 初始化與讀取本地存檔
     if 'raw_market_data' not in st.session_state:
         if os.path.exists(CACHE_FILE):
             try:
@@ -87,7 +85,6 @@ if page == "🔍 雷達掃描 (動態記憶版)":
             st.sidebar.error("CSV 解析失敗，請確認欄位格式。")
         return chip_dict
 
-    # --- 核心引擎：抓取並寫入實體硬碟 ---
     if st.sidebar.button("🚀 啟動資料抓取 (每日只需按一次)"):
         chip_data = {}
         if chip_source == "手動上傳 CSV (100%準確，強烈建議)" and uploaded_chip_csv is not None:
@@ -153,7 +150,6 @@ if page == "🔍 雷達掃描 (動態記憶版)":
 
         status_text.success(f"✅ 數據下載並存檔完成！已將 {len(raw_results)} 檔股票存入本地資料庫。")
 
-    # --- 動態篩選引擎：瞬間運算 ---
     if st.session_state.get('raw_market_data'):
         st.markdown("### ⚙️ 第二步：動態參數篩選 (瞬間完成，關網頁也不會消失)")
         df_raw = pd.DataFrame(st.session_state['raw_market_data'])
@@ -181,7 +177,7 @@ if page == "🔍 雷達掃描 (動態記憶版)":
             st.success(f"🎯 瞬間篩選完畢！符合條件共 **{len(df_display)}** 檔精銳。")
             st.dataframe(df_display, use_container_width=True)
 
-            # === V15.0 新增：儲存策略快照 ===
+            # === V15.1 升級：儲存策略快照 (包含參數記憶) ===
             st.markdown("---")
             st.subheader("💾 策略快照建檔 (供未來績效追蹤)")
             snapshot_name = st.text_input("為這份名單命名 (例如: 20260616_A策略_投信大買)", f"{datetime.now().strftime('%Y%m%d')}_精選名單")
@@ -194,7 +190,18 @@ if page == "🔍 雷達掃描 (動態記憶版)":
                     except: pass
                 
                 records = df_display[['代號', '名稱', '收盤價', '符合策略']].to_dict('records')
-                snapshot_data[snapshot_name] = {"date": datetime.now().strftime("%Y-%m-%d"), "records": records}
+                
+                # 將當下的參數一起打包存檔
+                snapshot_data[snapshot_name] = {
+                    "date": datetime.now().strftime("%Y-%m-%d"),
+                    "parameters": {
+                        "A策略 MA20 乖離上限(%)": a_ma20_bias,
+                        "B策略 MA60 乖離上限(%)": b_ma60_bias,
+                        "B策略 成交量門檻(張)": b_vol_min,
+                        "投信買超大於(張)": min_it_buy
+                    },
+                    "records": records
+                }
                 
                 with open("strategy_snapshots.json", "w", encoding="utf-8") as f:
                     json.dump(snapshot_data, f, ensure_ascii=False, indent=4)
@@ -203,7 +210,7 @@ if page == "🔍 雷達掃描 (動態記憶版)":
             st.warning("⚠️ 目前參數下沒有符合條件的股票，請嘗試放寬乖離率或降低投信買超門檻！")
 
 # ==========================================
-# 頁面 2：策略績效追蹤 (回測與保鮮期驗證)
+# 頁面 2：策略績效追蹤 (V15.1 顯示參數版)
 # ==========================================
 elif page == "📊 策略績效追蹤 (回測)":
     st.title("📊 策略績效追蹤與保鮮期驗證")
@@ -226,8 +233,15 @@ elif page == "📊 策略績效追蹤 (回測)":
                 data = snapshot_data[selected_snapshot]
                 records = data["records"]
                 save_date = data["date"]
+                params = data.get("parameters", {}) # 讀取當時的參數
                 
                 st.info(f"📅 快照建立日期：{save_date} | 追蹤檔數：{len(records)} 檔")
+                
+                # === V15.1 升級：顯示當時的參數配方 ===
+                if params:
+                    with st.expander("🔍 點擊檢視當時的【篩選參數配方】"):
+                        for k, v in params.items():
+                            st.markdown(f"- **{k}**: `{v}`")
                 
                 results = []
                 progress_bar = st.progress(0)
