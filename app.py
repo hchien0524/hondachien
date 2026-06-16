@@ -8,16 +8,17 @@ import pandas as pd
 import time
 import twstock
 import plotly.graph_objects as go
+import plotly.express as px
 
 # ==========================================
 # 系統初始化與版面設定
 # ==========================================
-st.set_page_config(page_title="HIOS 波段雷達 V15.1", layout="wide")
+st.set_page_config(page_title="HIOS 波段雷達 V16.0", layout="wide")
 
 st.sidebar.title("🚀 HIOS 系統導覽")
 page = st.sidebar.radio("功能模組", [
     "🔍 雷達掃描 (動態記憶版)",
-    "📊 策略績效追蹤 (回測)",
+    "📊 策略競技場 (多維度回測)",
     "📈 互動 K 線圖"
 ])
 
@@ -26,10 +27,10 @@ def get_stock_name(code):
     return "未知"
 
 # ==========================================
-# 頁面 1：雷達掃描 (V15.1 參數記憶快照)
+# 頁面 1：雷達掃描 (V16.0 防覆蓋快照)
 # ==========================================
 if page == "🔍 雷達掃描 (動態記憶版)":
-    st.title("🚀 HIOS 波段雷達 (V15.1 參數記憶版)")
+    st.title("🚀 HIOS 波段雷達 (V16.0 旗艦版)")
     
     CACHE_FILE = "market_data_cache.json"
 
@@ -177,10 +178,12 @@ if page == "🔍 雷達掃描 (動態記憶版)":
             st.success(f"🎯 瞬間篩選完畢！符合條件共 **{len(df_display)}** 檔精銳。")
             st.dataframe(df_display, use_container_width=True)
 
-            # === V15.1 升級：儲存策略快照 (包含參數記憶) ===
+            # === V16.0 升級：自動加入時分秒，防止同日快照覆蓋 ===
             st.markdown("---")
             st.subheader("💾 策略快照建檔 (供未來績效追蹤)")
-            snapshot_name = st.text_input("為這份名單命名 (例如: 20260616_A策略_投信大買)", f"{datetime.now().strftime('%Y%m%d')}_精選名單")
+            default_snap_name = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_策略名單"
+            snapshot_name = st.text_input("為這份名單命名 (系統已自動加入時間戳記防覆蓋)", default_snap_name)
+            
             if st.button("💾 儲存此名單為歷史快照"):
                 snapshot_data = {}
                 if os.path.exists("strategy_snapshots.json"):
@@ -191,9 +194,8 @@ if page == "🔍 雷達掃描 (動態記憶版)":
                 
                 records = df_display[['代號', '名稱', '收盤價', '符合策略']].to_dict('records')
                 
-                # 將當下的參數一起打包存檔
                 snapshot_data[snapshot_name] = {
-                    "date": datetime.now().strftime("%Y-%m-%d"),
+                    "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "parameters": {
                         "A策略 MA20 乖離上限(%)": a_ma20_bias,
                         "B策略 MA60 乖離上限(%)": b_ma60_bias,
@@ -205,20 +207,20 @@ if page == "🔍 雷達掃描 (動態記憶版)":
                 
                 with open("strategy_snapshots.json", "w", encoding="utf-8") as f:
                     json.dump(snapshot_data, f, ensure_ascii=False, indent=4)
-                st.success(f"✅ 快照 [{snapshot_name}] 已成功儲存！請前往左側「📊 策略績效追蹤」檢視。")
+                st.success(f"✅ 快照 [{snapshot_name}] 已成功儲存！請前往左側「📊 策略競技場」檢視。")
         else:
             st.warning("⚠️ 目前參數下沒有符合條件的股票，請嘗試放寬乖離率或降低投信買超門檻！")
 
 # ==========================================
-# 頁面 2：策略績效追蹤 (V15.1 顯示參數版)
+# 頁面 2：策略競技場 (V16.0 多維度比對版)
 # ==========================================
-elif page == "📊 策略績效追蹤 (回測)":
-    st.title("📊 策略績效追蹤與保鮮期驗證")
-    st.markdown("載入歷史快照，系統將自動抓取今日最新價格，瞬間結算策略勝率與報酬率！")
+elif page == "📊 策略競技場 (多維度回測)":
+    st.title("⚔️ 策略競技場 (多維度回測與比對)")
+    st.markdown("選擇多個歷史快照，系統將自動結算並進行 **A/B 測試比對**，找出最強獲利配方！")
     
     SNAPSHOT_FILE = "strategy_snapshots.json"
     if not os.path.exists(SNAPSHOT_FILE):
-        st.warning("⚠️ 目前沒有任何歷史快照。請先到「雷達掃描」頁面，篩選出名單後點擊【儲存此名單為歷史快照】！")
+        st.warning("⚠️ 目前沒有任何歷史快照。請先到「雷達掃描」頁面儲存快照！")
     else:
         with open(SNAPSHOT_FILE, "r", encoding="utf-8") as f:
             snapshot_data = json.load(f)
@@ -226,68 +228,95 @@ elif page == "📊 策略績效追蹤 (回測)":
         if not snapshot_data:
             st.warning("⚠️ 快照庫為空。")
         else:
-            col1, col2 = st.columns([3, 1])
-            selected_snapshot = col1.selectbox("📂 選擇要追蹤的歷史快照", list(snapshot_data.keys()))
+            # === V16.0 升級：改為多選框 (Multiselect) ===
+            selected_snapshots = st.multiselect("📂 選擇要追蹤與比對的歷史快照 (可多選)", list(snapshot_data.keys()), default=list(snapshot_data.keys())[-1:] if snapshot_data else None)
             
-            if col2.button("🚀 結算最新績效"):
-                data = snapshot_data[selected_snapshot]
-                records = data["records"]
-                save_date = data["date"]
-                params = data.get("parameters", {}) # 讀取當時的參數
-                
-                st.info(f"📅 快照建立日期：{save_date} | 追蹤檔數：{len(records)} 檔")
-                
-                # === V15.1 升級：顯示當時的參數配方 ===
-                if params:
-                    with st.expander("🔍 點擊檢視當時的【篩選參數配方】"):
-                        for k, v in params.items():
-                            st.markdown(f"- **{k}**: `{v}`")
-                
-                results = []
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                for i, rec in enumerate(records):
-                    ticker = rec["代號"]
-                    name = rec["名稱"]
-                    entry_price = rec["收盤價"]
-                    strategy = rec["符合策略"]
+            if st.button("🚀 結算與比對績效"):
+                if not selected_snapshots:
+                    st.warning("請至少選擇一個快照進行結算！")
+                else:
+                    comparison_results = []
+                    all_details = {}
                     
-                    status_text.text(f"正在結算 {ticker} {name} 的最新價格...")
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
                     
-                    yf_ticker = f"{ticker}.TW" if twstock.codes.get(ticker) and twstock.codes[ticker].market == '上市' else f"{ticker}.TWO"
-                    try:
-                        df_current = yf.download(yf_ticker, period="5d", progress=False)
-                        if not df_current.empty:
-                            if isinstance(df_current.columns, pd.MultiIndex): 
-                                df_current.columns = df_current.columns.get_level_values(0)
-                            current_price = float(df_current['Close'].iloc[-1])
-                            return_pct = round((current_price - entry_price) / entry_price * 100, 2)
+                    total_stocks = sum([len(snapshot_data[snap]["records"]) for snap in selected_snapshots])
+                    processed_stocks = 0
+                    
+                    # 迴圈處理每一個選中的快照
+                    for snap_name in selected_snapshots:
+                        data = snapshot_data[snap_name]
+                        records = data["records"]
+                        save_date = data["date"]
+                        params = data.get("parameters", {})
+                        
+                        snap_results = []
+                        
+                        for rec in records:
+                            ticker = rec["代號"]
+                            name = rec["名稱"]
+                            entry_price = rec["收盤價"]
                             
-                            results.append({
-                                "代號": ticker, "名稱": name, "策略": strategy,
-                                "進場價 (快照)": entry_price, "最新價 (今日)": round(current_price, 2),
-                                "報酬率 (%)": return_pct,
-                                "狀態": "🔴 虧損" if return_pct < 0 else "🟢 獲利"
+                            status_text.text(f"正在結算 [{snap_name}] 中的 {ticker} {name} ...")
+                            
+                            yf_ticker = f"{ticker}.TW" if twstock.codes.get(ticker) and twstock.codes[ticker].market == '上市' else f"{ticker}.TWO"
+                            try:
+                                df_current = yf.download(yf_ticker, period="5d", progress=False)
+                                if not df_current.empty:
+                                    if isinstance(df_current.columns, pd.MultiIndex): 
+                                        df_current.columns = df_current.columns.get_level_values(0)
+                                    current_price = float(df_current['Close'].iloc[-1])
+                                    return_pct = round((current_price - entry_price) / entry_price * 100, 2)
+                                    
+                                    snap_results.append({
+                                        "代號": ticker, "名稱": name,
+                                        "進場價": entry_price, "最新價": round(current_price, 2),
+                                        "報酬率(%)": return_pct
+                                    })
+                            except: pass
+                            
+                            processed_stocks += 1
+                            progress_bar.progress(processed_stocks / total_stocks)
+                            time.sleep(0.1)
+                            
+                        if snap_results:
+                            df_res = pd.DataFrame(snap_results)
+                            avg_return = round(df_res["報酬率(%)"].mean(), 2)
+                            win_rate = round(len(df_res[df_res["報酬率(%)"] > 0]) / len(df_res) * 100, 2)
+                            
+                            comparison_results.append({
+                                "快照名稱": snap_name,
+                                "建立時間": save_date,
+                                "檔數": len(snap_results),
+                                "平均報酬率(%)": avg_return,
+                                "勝率(%)": win_rate
                             })
-                    except: pass
-                    time.sleep(0.1)
-                    progress_bar.progress((i + 1) / len(records))
+                            all_details[snap_name] = {"df": df_res, "params": params}
+                            
+                    status_text.empty()
                     
-                status_text.empty()
-                
-                if results:
-                    df_res = pd.DataFrame(results)
-                    avg_return = round(df_res["報酬率 (%)"].mean(), 2)
-                    win_rate = round(len(df_res[df_res["報酬率 (%)"] > 0]) / len(df_res) * 100, 2)
-                    
-                    st.markdown("### 🏆 策略結算報告")
-                    m1, m2, m3 = st.columns(3)
-                    m1.metric("📈 平均報酬率", f"{avg_return}%", f"{avg_return}%")
-                    m2.metric("🎯 策略勝率", f"{win_rate}%")
-                    m3.metric("⏳ 經過天數", f"自 {save_date} 至今")
-                    
-                    st.dataframe(df_res, use_container_width=True)
+                    # === 顯示競技場比較結果 ===
+                    if comparison_results:
+                        st.markdown("---")
+                        st.header("🏆 策略競技場總結算")
+                        df_comp = pd.DataFrame(comparison_results).sort_values(by="平均報酬率(%)", ascending=False)
+                        
+                        # 繪製比較長條圖
+                        fig = px.bar(df_comp, x="快照名稱", y="平均報酬率(%)", color="勝率(%)", 
+                                     title="各策略平均報酬率比對 (顏色越亮代表勝率越高)",
+                                     text="平均報酬率(%)", template="plotly_dark", color_continuous_scale="Viridis")
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        st.dataframe(df_comp, use_container_width=True)
+                        
+                        # 顯示各別快照的明細與參數
+                        st.markdown("### 📋 各策略詳細配方與明細")
+                        for snap_name in df_comp["快照名稱"]:
+                            with st.expander(f"📂 展開檢視：{snap_name}"):
+                                st.markdown("**⚙️ 當時篩選參數：**")
+                                st.json(all_details[snap_name]["params"])
+                                st.dataframe(all_details[snap_name]["df"], use_container_width=True)
 
 # ==========================================
 # 頁面 3：互動 K 線圖
