@@ -57,10 +57,10 @@ if page == "🌍 市場環境 (資金流向)":
                 else: st.metric(label=name, value="無資料", delta="-")
 
 # ==========================================
-# 頁面 2：雷達掃描 (新增評分明細)
+# 頁面 2：雷達掃描 (V12.0 籌碼交集終極版)
 # ==========================================
 elif page == "🔍 雷達掃描 (白箱解析)":
-    st.title("🚀 HIOS 波段雷達 (進階篩選版)")
+    st.title("🚀 HIOS 波段雷達 (V12.0 籌碼交集版)")
     
     @st.cache_data
     def get_market_tickers(market_type):
@@ -72,9 +72,19 @@ elif page == "🔍 雷達掃描 (白箱解析)":
                 names[code] = info.name
         return tickers, names
 
-    st.sidebar.header("⚙️ 掃描參數")
+    st.sidebar.header("⚙️ 掃描與籌碼參數")
     scan_mode = st.sidebar.radio("掃描範圍：", ("自選股 (快速)", "上市 (TWSE) 約900檔", "上櫃 (TPEx) 約800檔"))
     tickers_input = st.sidebar.text_area("自選股代號 (逗號分隔)", "2382, 3413, 3015, 8210, 2421, 6274") if scan_mode == "自選股 (快速)" else ""
+    
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("📊 籌碼資料來源")
+    chip_source = st.sidebar.radio("三大法人資料：", ("自動抓取 (TWSE上市)", "手動上傳 CSV (全市場備用)"))
+    uploaded_chip_csv = None
+    if chip_source == "手動上傳 CSV (全市場備用)":
+        uploaded_chip_csv = st.sidebar.file_uploader("上傳籌碼 CSV", type=["csv"])
+        st.sidebar.caption("💡 提示：若掃描上櫃股票，或自動抓取失敗時，可上傳券商匯出的 CSV。")
+
+    st.sidebar.markdown("---")
     a_ma20_bias = st.sidebar.slider("A策略 MA20 正乖離上限 (%)", 1.0, 15.0, 5.0)
     b_ma60_bias = st.sidebar.slider("B策略 MA60 正乖離上限 (%)", 1.0, 20.0, 10.0)
     b_vol_min = st.sidebar.slider("B策略 成交量門檻 (張)", 500, 10000, 3000)
@@ -82,7 +92,51 @@ elif page == "🔍 雷達掃描 (白箱解析)":
     if 'scan_results' not in st.session_state:
         st.session_state['scan_results'] = []
 
-    if st.button("🚀 啟動全市場掃描"):
+    @st.cache_data(ttl=3600)
+    def fetch_twse_chips():
+        chip_dict = {}
+        try:
+            # 串接台灣證交所 Open API (三大法人買賣超日報)
+            url = "https://openapi.twse.com.tw/v1/fund/T86_ALL"
+            res = requests.get(url, timeout=10 )
+            if res.status_code == 200:
+                data = res.json()
+                for item in data:
+                    code = str(item.get('Code', '')).strip()
+                    # 證交所單位是「股」，需除以 1000 換算成「張」
+                    fi_diff = float(str(item.get('ForeignInvestorDifference', '0')).replace(',', '')) / 1000
+                    it_diff = float(str(item.get('InvestmentTrustDifference', '0')).replace(',', '')) / 1000
+                    chip_dict[code] = {"外資買賣超": round(fi_diff, 1), "投信買賣超": round(it_diff, 1)}
+        except Exception as e:
+            st.sidebar.error(f"自動抓取籌碼失敗: {e}")
+        return chip_dict
+
+    def parse_uploaded_chips(file):
+        chip_dict = {}
+        try:
+            df_chip = pd.read_csv(file)
+            code_col = [c for c in df_chip.columns if '代號' in c or '代碼' in c or 'Code' in c][0]
+            fi_col = [c for c in df_chip.columns if '外資' in c][0]
+            it_col = [c for c in df_chip.columns if '投信' in c][0]
+            for _, row in df_chip.iterrows():
+                code = str(row[code_col]).replace('=', '').replace('"', '').strip()
+                fi_val = pd.to_numeric(str(row[fi_col]).replace(',', ''), errors='coerce')
+                it_val = pd.to_numeric(str(row[it_col]).replace(',', ''), errors='coerce')
+                chip_dict[code] = {"外資買賣超": fi_val if pd.notna(fi_val) else 0, "投信買賣超": it_val if pd.notna(it_val) else 0}
+        except Exception:
+            st.sidebar.error("CSV 解析失敗，請確認欄位包含代號、外資、投信。")
+        return chip_dict
+
+    if st.button("🚀 啟動全市場掃描 (含籌碼交集)"):
+        # 1. 準備籌碼資料
+        chip_data = {}
+        if chip_source == "自動抓取 (TWSE上市)":
+            with st.spinner("正在連線證交所抓取最新籌碼..."):
+                chip_data = fetch_twse_chips()
+        elif chip_source == "手動上傳 CSV (全市場備用)" and uploaded_chip_csv is not None:
+            chip_data = parse_uploaded_chips(uploaded_chip_csv)
+
+        # 2. 準備股票名單
         target_tickers, stock_names_dict = [], {}
         if scan_mode == "自選股 (快速)":
             for t in [x.strip() for x in tickers_input.split(",")]:
@@ -93,6 +147,7 @@ elif page == "🔍 雷達掃描 (白箱解析)":
                 else: target_tickers.append(f"{pure_code}.TW")
         else: target_tickers, stock_names_dict = get_market_tickers(scan_mode)
 
+        # 3. 執行技術面與籌碼面交集掃描
         results, progress_bar, status_text = [], st.progress(0), st.empty()
         for i, ticker in enumerate(target_tickers):
             pure_code = ticker.split('.')[0] 
@@ -124,15 +179,19 @@ elif page == "🔍 雷達掃描 (白箱解析)":
                     if v > (vm5 * 2): score += 15; details.append("動能爆發")
                     if 50 <= rsi <= 75: score += 20; details.append("RSI強勢")
                     
+                    # 獲取籌碼數據
+                    it_buy = chip_data.get(pure_code, {}).get("投信買賣超", 0)
+                    fi_buy = chip_data.get(pure_code, {}).get("外資買賣超", 0)
+
                     results.append({
                         "代號": pure_code, "名稱": current_name, "收盤價": round(c, 1), 
-                        "分數數值": score, # 隱藏欄位，用於篩選
+                        "分數數值": score, "投信數值": it_buy, # 隱藏欄位，用於篩選
                         "綜合評分": f"{score}分 {'🌟' * (score // 20)}",
+                        "投信買賣超(張)": it_buy, "外資買賣超(張)": fi_buy,
                         "評分明細": " + ".join(details),
                         "符合策略": "+".join([s for s, cond in zip(["A策略", "B策略"], [a_cond, b_cond]) if cond]),
                         "MA20乖離(%)": round((c - m20) / m20 * 100, 1), "成交量(張)": int(v),
-                        "建議買區": f"{m20:.1f} ~ {m20 * 1.02:.1f}", "停損價": round(m20 * 0.97, 1), "目標價": round(c * 1.15, 1),
-                        "狀態": "🟢 可佈局" if c <= (m20 * 1.02) else "🟡 觀察等待", "警示": "⚠️ 爆量風險" if v > (vm5 * 3) else ""
+                        "建議買區": f"{m20:.1f} ~ {m20 * 1.02:.1f}", "停損價": round(m20 * 0.97, 1), "狀態": "🟢 可佈局" if c <= (m20 * 1.02) else "🟡 觀察等待"
                     })
             except: pass
             time.sleep(0.2)
@@ -144,30 +203,31 @@ elif page == "🔍 雷達掃描 (白箱解析)":
     # 顯示篩選器與結果
     if st.session_state['scan_results']:
         st.markdown("---")
-        st.markdown("### 🎯 掃描結果二次篩選 (精準狙擊)")
+        st.markdown("### 🎯 掃描結果二次篩選 (籌碼過濾)")
         df_all = pd.DataFrame(st.session_state['scan_results'])
         
         col_f1, col_f2, col_f3, col_f4 = st.columns(4)
         min_score = col_f1.number_input("最低綜合評分", min_value=0, max_value=100, value=80, step=5)
-        target_status = col_f2.multiselect("狀態篩選", ["🟢 可佈局", "🟡 觀察等待"], default=["🟢 可佈局"])
-        sort_by = col_f3.selectbox("優先排序方式", ["成交量(張) (由大到小)", "MA20乖離(%) (由小到大)", "綜合評分 (由高到低)"])
+        min_it_buy = col_f2.number_input("投信買超大於 (張)", min_value=0, max_value=10000, value=100, step=100)
+        sort_by = col_f3.selectbox("優先排序方式", ["投信買賣超(張) (由大到小)", "成交量(張) (由大到小)", "綜合評分 (由高到低)"])
         top_n = col_f4.number_input("只抓取前 N 檔 (最多15)", min_value=1, max_value=15, value=5)
 
-        # 執行篩選
+        # 執行篩選 (加入投信籌碼條件)
         df_filtered = df_all[
             (df_all['分數數值'] >= min_score) & 
-            (df_all['狀態'].isin(target_status))
+            (df_all['投信數值'] >= min_it_buy) &
+            (df_all['狀態'] == "🟢 可佈局")
         ].copy()
 
         # 執行排序
-        if "成交量" in sort_by:
+        if "投信" in sort_by:
+            df_filtered = df_filtered.sort_values(by="投信買賣超(張)", ascending=False)
+        elif "成交量" in sort_by:
             df_filtered = df_filtered.sort_values(by="成交量(張)", ascending=False)
-        elif "乖離" in sort_by:
-            df_filtered = df_filtered.sort_values(by="MA20乖離(%)", ascending=True)
         else:
             df_filtered = df_filtered.sort_values(by="分數數值", ascending=False)
 
-        df_filtered = df_filtered.drop(columns=['分數數值']) # 隱藏數值欄位
+        df_filtered = df_filtered.drop(columns=['分數數值', '投信數值']) # 隱藏數值欄位
         
         export_df = df_filtered.head(top_n)
         st.success(f"符合條件共 {len(df_filtered)} 檔，目前為您顯示並抓取排名前 **{len(export_df)}** 檔精銳！")
@@ -178,16 +238,16 @@ elif page == "🔍 雷達掃描 (白箱解析)":
             st.download_button("📥 下載完整篩選名單", data=df_filtered.to_csv(index=False).encode('utf-8-sig'), file_name="hios_filtered.csv", mime="text/csv")
         with col_copy:
             if st.button("🤖 將這幾檔產生 Manus 分析指令 (一鍵複製)"):
-                report = "Manus 指揮官呼叫！以下是我透過雷達嚴格篩選出的【Top 精銳名單】，請幫我進行即時聯網分析：\n\n"
+                report = "Manus 指揮官呼叫！以下是我透過【技術面+籌碼面】雙重濾網篩選出的 S 級真龍，請幫我進行即時聯網分析：\n\n"
                 for _, row in export_df.iterrows():
                     report += f"### {row['代號']} {row['名稱']} (評分: {row['綜合評分']})\n"
-                    report += f"- **符合**: {row['符合策略']} | **狀態**: {row['狀態']}\n"
+                    report += f"- **籌碼亮點**: 投信買超 {row['投信買賣超(張)']} 張 | 外資買超 {row['外資買賣超(張)']} 張\n"
                     report += f"- **技術亮點**: {row['評分明細']}\n"
                     report += f"- **建議買區**: {row['建議買區']} | **停損價**: {row['停損價']}\n\n"
                 
                 report += "---\n**【Manus 任務指令】**\n"
-                report += "1. 請聯網查詢這幾檔股票「今日的即時報價與走勢」，確認是否還在建議買區內，有無爆量跌破風險。\n"
-                report += "2. 查詢近期的「法人籌碼動向」與「基本面題材」。\n"
+                report += "1. 請聯網查詢這幾檔股票「今日的即時報價與走勢」，確認是否還在建議買區內。\n"
+                report += "2. 查詢最新的「基本面題材」與「營收狀況」。\n"
                 report += "3. 幫我從中挑選出 1 檔最適合明天動用 50 萬資金試單的標的，並給出具體理由！"
                 
                 st.success("✅ 指令已生成！請點擊下方複製圖示貼給 Manus。")
