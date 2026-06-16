@@ -13,7 +13,7 @@ import plotly.express as px
 # ==========================================
 # 系統初始化與版面設定
 # ==========================================
-st.set_page_config(page_title="HIOS 波段雷達 V16.0", layout="wide")
+st.set_page_config(page_title="HIOS 波段雷達 V16.1", layout="wide")
 
 st.sidebar.title("🚀 HIOS 系統導覽")
 page = st.sidebar.radio("功能模組", [
@@ -30,7 +30,7 @@ def get_stock_name(code):
 # 頁面 1：雷達掃描 (V16.0 防覆蓋快照)
 # ==========================================
 if page == "🔍 雷達掃描 (動態記憶版)":
-    st.title("🚀 HIOS 波段雷達 (V16.0 旗艦版)")
+    st.title("🚀 HIOS 波段雷達 (V16.1 旗艦版)")
     
     CACHE_FILE = "market_data_cache.json"
 
@@ -178,7 +178,6 @@ if page == "🔍 雷達掃描 (動態記憶版)":
             st.success(f"🎯 瞬間篩選完畢！符合條件共 **{len(df_display)}** 檔精銳。")
             st.dataframe(df_display, use_container_width=True)
 
-            # === V16.0 升級：自動加入時分秒，防止同日快照覆蓋 ===
             st.markdown("---")
             st.subheader("💾 策略快照建檔 (供未來績效追蹤)")
             default_snap_name = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_策略名單"
@@ -212,13 +211,26 @@ if page == "🔍 雷達掃描 (動態記憶版)":
             st.warning("⚠️ 目前參數下沒有符合條件的股票，請嘗試放寬乖離率或降低投信買超門檻！")
 
 # ==========================================
-# 頁面 2：策略競技場 (V16.0 多維度比對版)
+# 頁面 2：策略競技場 (V16.1 永久記憶版)
 # ==========================================
 elif page == "📊 策略競技場 (多維度回測)":
     st.title("⚔️ 策略競技場 (多維度回測與比對)")
-    st.markdown("選擇多個歷史快照，系統將自動結算並進行 **A/B 測試比對**，找出最強獲利配方！")
+    st.markdown("選擇多個歷史快照進行 A/B 測試。**系統會自動記憶上次的結算結果，無需重複等待！**")
     
     SNAPSHOT_FILE = "strategy_snapshots.json"
+    ARENA_CACHE_FILE = "arena_cache.json"
+    
+    # 讀取競技場專屬記憶體
+    if 'arena_cache' not in st.session_state:
+        if os.path.exists(ARENA_CACHE_FILE):
+            try:
+                with open(ARENA_CACHE_FILE, "r", encoding="utf-8") as f:
+                    st.session_state['arena_cache'] = json.load(f)
+            except:
+                st.session_state['arena_cache'] = None
+        else:
+            st.session_state['arena_cache'] = None
+
     if not os.path.exists(SNAPSHOT_FILE):
         st.warning("⚠️ 目前沒有任何歷史快照。請先到「雷達掃描」頁面儲存快照！")
     else:
@@ -228,10 +240,9 @@ elif page == "📊 策略競技場 (多維度回測)":
         if not snapshot_data:
             st.warning("⚠️ 快照庫為空。")
         else:
-            # === V16.0 升級：改為多選框 (Multiselect) ===
             selected_snapshots = st.multiselect("📂 選擇要追蹤與比對的歷史快照 (可多選)", list(snapshot_data.keys()), default=list(snapshot_data.keys())[-1:] if snapshot_data else None)
             
-            if st.button("🚀 結算與比對績效"):
+            if st.button("🚀 強制重新連線結算 (獲取最新股價)"):
                 if not selected_snapshots:
                     st.warning("請至少選擇一個快照進行結算！")
                 else:
@@ -244,7 +255,6 @@ elif page == "📊 策略競技場 (多維度回測)":
                     total_stocks = sum([len(snapshot_data[snap]["records"]) for snap in selected_snapshots])
                     processed_stocks = 0
                     
-                    # 迴圈處理每一個選中的快照
                     for snap_name in selected_snapshots:
                         data = snapshot_data[snap_name]
                         records = data["records"]
@@ -292,31 +302,48 @@ elif page == "📊 策略競技場 (多維度回測)":
                                 "平均報酬率(%)": avg_return,
                                 "勝率(%)": win_rate
                             })
-                            all_details[snap_name] = {"df": df_res, "params": params}
+                            all_details[snap_name] = {"df": df_res.to_dict('records'), "params": params}
                             
                     status_text.empty()
                     
-                    # === 顯示競技場比較結果 ===
+                    # === V16.1 升級：將結算結果存入實體硬碟 ===
                     if comparison_results:
-                        st.markdown("---")
-                        st.header("🏆 策略競技場總結算")
-                        df_comp = pd.DataFrame(comparison_results).sort_values(by="平均報酬率(%)", ascending=False)
-                        
-                        # 繪製比較長條圖
-                        fig = px.bar(df_comp, x="快照名稱", y="平均報酬率(%)", color="勝率(%)", 
-                                     title="各策略平均報酬率比對 (顏色越亮代表勝率越高)",
-                                     text="平均報酬率(%)", template="plotly_dark", color_continuous_scale="Viridis")
-                        st.plotly_chart(fig, use_container_width=True)
-                        
-                        st.dataframe(df_comp, use_container_width=True)
-                        
-                        # 顯示各別快照的明細與參數
-                        st.markdown("### 📋 各策略詳細配方與明細")
-                        for snap_name in df_comp["快照名稱"]:
-                            with st.expander(f"📂 展開檢視：{snap_name}"):
-                                st.markdown("**⚙️ 當時篩選參數：**")
-                                st.json(all_details[snap_name]["params"])
-                                st.dataframe(all_details[snap_name]["df"], use_container_width=True)
+                        cache_data = {
+                            "update_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "comparison_results": comparison_results,
+                            "all_details": all_details
+                        }
+                        try:
+                            with open(ARENA_CACHE_FILE, "w", encoding="utf-8") as f:
+                                json.dump(cache_data, f, ensure_ascii=False, indent=4)
+                            st.session_state['arena_cache'] = cache_data
+                            st.success("✅ 結算完成！結果已永久儲存至本地資料庫。")
+                        except Exception as e:
+                            st.error(f"存檔失敗: {e}")
+
+            # === V16.1 升級：直接讀取並顯示記憶體中的結果 ===
+            if st.session_state.get('arena_cache'):
+                cache = st.session_state['arena_cache']
+                st.info(f"💾 目前顯示為本地快取資料 (最後結算時間: **{cache['update_time']}**)。若需最新股價，請點擊上方按鈕重新結算。")
+                
+                st.markdown("---")
+                st.header("🏆 策略競技場總結算")
+                df_comp = pd.DataFrame(cache["comparison_results"]).sort_values(by="平均報酬率(%)", ascending=False)
+                
+                fig = px.bar(df_comp, x="快照名稱", y="平均報酬率(%)", color="勝率(%)", 
+                             title="各策略平均報酬率比對 (顏色越亮代表勝率越高)",
+                             text="平均報酬率(%)", template="plotly_dark", color_continuous_scale="Viridis")
+                st.plotly_chart(fig, use_container_width=True)
+                
+                st.dataframe(df_comp, use_container_width=True)
+                
+                st.markdown("### 📋 各策略詳細配方與明細")
+                for snap_name in df_comp["快照名稱"]:
+                    with st.expander(f"📂 展開檢視：{snap_name}"):
+                        detail = cache["all_details"].get(snap_name, {})
+                        st.markdown("**⚙️ 當時篩選參數：**")
+                        st.json(detail.get("params", {}))
+                        st.dataframe(pd.DataFrame(detail.get("df", [])), use_container_width=True)
 
 # ==========================================
 # 頁面 3：互動 K 線圖
@@ -338,10 +365,4 @@ elif page == "📈 互動 K 線圖":
                 if not df.empty:
                     if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
                     df['MA20'], df['MA60'] = df['Close'].rolling(20).mean(), df['Close'].rolling(60).mean()
-                    fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='K線', increasing_line_color='red', decreasing_line_color='green')])
-                    fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], line=dict(color='orange', width=1.5), name='月線 (MA20)'))
-                    fig.add_trace(go.Scatter(x=df.index, y=df['MA60'], line=dict(color='blue', width=1.5), name='季線 (MA60)'))
-                    fig.update_layout(title=f"{name} ({chart_ticker}) 近半年技術線圖", yaxis_title='股價 (元)', xaxis_rangeslider_visible=False, template='plotly_dark', height=600)
-                    st.plotly_chart(fig, use_container_width=True)
-                else: st.error("找不到該檔股票的資料。")
-            except Exception as e: st.error(f"繪圖發生錯誤: {e}")
+                    fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='K線', increasing_line_
