@@ -4,7 +4,15 @@ import pandas as pd
 import time
 
 st.set_page_config(page_title="HIOS 波段雷達", layout="wide")
-st.title("🚀 HIOS 波段雷達 (核心引擎 V1.0)")
+st.title("🚀 HIOS 波段雷達 (核心引擎 V1.1)")
+
+# --- 專屬股票翻譯字典 ---
+STOCK_NAMES = {
+    "2382": "廣達", "3413": "京鼎", "3015": "全漢",
+    "8210": "勤誠", "2421": "建準", "6274": "台燿",
+    "3491": "昇達科", "2313": "華通", "6285": "啟碁",
+    "2330": "台積電", "2317": "鴻海", "2454": "聯發科"
+}
 
 # --- 側邊欄 UI ---
 st.sidebar.header("⚙️ 參數設定")
@@ -77,8 +85,12 @@ if st.sidebar.button("啟動全市場掃描"):
                 if a_cond: strategy.append("A策略")
                 if b_cond: strategy.append("B策略")
 
+                # 查詢字典，如果找不到就顯示"未知"
+                stock_name = STOCK_NAMES.get(ticker, "未知")
+
                 results.append({
                     "代號": ticker,
+                    "名稱": stock_name,
                     "收盤價": round(close_price, 1),
                     "符合策略": "+".join(strategy),
                     "MA20乖離(%)": round((close_price - ma20) / ma20 * 100, 1),
