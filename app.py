@@ -4,11 +4,19 @@ import pandas as pd
 import time
 import twstock
 import plotly.graph_objects as go
+import plotly.express as px
 
 st.set_page_config(page_title="HIOS 波段雷達", layout="wide", page_icon="🚀")
 
-st.sidebar.title("HIOS 旗艦系統 V7.2")
-page = st.sidebar.radio("請選擇功能模組：", ["🌍 市場環境 (資金流向)", "🔍 雷達掃描 (綜合評分)", "🛡️ 持股防護罩 (健檢)", "📈 互動 K 線圖 (分析)"])
+st.sidebar.title("HIOS 旗艦系統 V8.0")
+page = st.sidebar.radio("請選擇功能模組：", [
+    "🌍 市場環境 (資金流向)", 
+    "🔍 雷達掃描 (綜合評分)", 
+    "🗂️ 股票池管理 (自選)",     # 新增功能 1
+    "🛡️ 持股防護罩 (健檢)",
+    "📊 績效與交易紀錄",        # 新增功能 2
+    "📈 互動 K 線圖 (分析)"
+])
 st.sidebar.markdown("---")
 
 @st.cache_data
@@ -137,14 +145,37 @@ elif page == "🔍 雷達掃描 (綜合評分)":
             columns_order = ["代號", "名稱", "收盤價", "綜合評分", "符合策略", "MA20乖離(%)", "成交量(張)", "建議買區", "停損價", "目標價", "狀態", "警示"]
             df_res = pd.DataFrame(results)[columns_order]
             st.dataframe(df_res, use_container_width=True)
-            
-            # 完美修復：強制轉成 bytes 並壓上 utf-8-sig 的 BOM 標記
             csv_bytes = df_res.to_csv(index=False).encode('utf-8-sig')
-            st.download_button(label="📥 下載 CSV 報表 (支援 Excel 中文)", data=csv_bytes, file_name="hios_radar_report.csv", mime="text/csv")
+            st.download_button(label="📥 下載 CSV 報表", data=csv_bytes, file_name="hios_radar_report.csv", mime="text/csv")
         else: st.info("目前沒有符合條件的標的。")
 
 # ==========================================
-# 頁面 3：持股防護罩
+# 頁面 3：股票池管理 (新增)
+# ==========================================
+elif page == "🗂️ 股票池管理 (自選)":
+    st.title("🗂️ 核心股票池管理")
+    st.markdown("將雷達掃描出的潛力標的加入此處，進行分級追蹤。")
+    
+    if 'stock_pool' not in st.session_state:
+        st.session_state['stock_pool'] = pd.DataFrame({
+            "代號": ["3413", "3015", "8210"],
+            "級別": ["A級核心池", "B級核心池", "觀察池"],
+            "追蹤筆記": ["投信連買，準備突破", "股本小，動能強", "回測月線有守"]
+        })
+    
+    edited_pool = st.data_editor(
+        st.session_state['stock_pool'], 
+        num_rows="dynamic", 
+        use_container_width=True,
+        column_config={
+            "級別": st.column_config.SelectboxColumn("級別", options=["A級核心池", "B級核心池", "觀察池"], required=True)
+        }
+    )
+    st.session_state['stock_pool'] = edited_pool
+    st.info("💡 提示：您可以直接在表格內修改代號、切換級別，或在最下方新增一列。")
+
+# ==========================================
+# 頁面 4：持股防護罩
 # ==========================================
 elif page == "🛡️ 持股防護罩 (健檢)":
     st.title("🛡️ 持股防護罩 (出場警示系統)")
@@ -184,7 +215,65 @@ elif page == "🛡️ 持股防護罩 (健檢)":
         if results: st.dataframe(pd.DataFrame(results), use_container_width=True)
 
 # ==========================================
-# 頁面 4：互動 K 線圖
+# 頁面 5：績效與交易紀錄 (新增)
+# ==========================================
+elif page == "📊 績效與交易紀錄":
+    st.title("📊 交易紀錄與績效儀表板")
+    
+    # 預設模擬交易紀錄 (讓圖表有資料可以畫)
+    if 'trade_records' not in st.session_state:
+        st.session_state['trade_records'] = pd.DataFrame({
+            "代號": ["2382", "3231", "2379", "3035", "8299"],
+            "策略": ["A策略", "A策略", "B策略", "B策略", "B策略"],
+            "出場日": ["2026/05/10", "2026/05/05", "2026/06/02", "2026/06/10", "2026/05/25"],
+            "進場價": [285.0, 82.0, 498.0, 228.0, 342.0],
+            "出場價": [268.0, 96.0, 545.0, 245.0, 318.0],
+            "股數": [1000, 2000, 1000, 1000, 1000]
+        })
+
+    st.markdown("### 📝 歷史交易明細")
+    edited_trades = st.data_editor(
+        st.session_state['trade_records'], 
+        num_rows="dynamic", 
+        use_container_width=True,
+        column_config={
+            "策略": st.column_config.SelectboxColumn("策略", options=["A策略", "B策略"], required=True)
+        }
+    )
+    st.session_state['trade_records'] = edited_trades
+
+    # 計算績效數據
+    df_trades = edited_trades.copy()
+    if not df_trades.empty:
+        df_trades['損益金額'] = (df_trades['出場價'] - df_trades['進場價']) * df_trades['股數']
+        df_trades['報酬率(%)'] = ((df_trades['出場價'] - df_trades['進場價']) / df_trades['進場價']) * 100
+        df_trades['獲利'] = df_trades['損益金額'] > 0
+        
+        total_trades = len(df_trades)
+        win_trades = len(df_trades[df_trades['獲利'] == True])
+        win_rate = (win_trades / total_trades) * 100 if total_trades > 0 else 0
+        total_profit = df_trades['損益金額'].sum()
+
+        st.markdown("---")
+        st.markdown("### 🏆 績效總覽")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("總交易次數", f"{total_trades} 次")
+        col2.metric("整體勝率", f"{win_rate:.1f} %")
+        col3.metric("累積總損益", f"{total_profit:,.0f} 元", delta="獲利" if total_profit > 0 else "虧損")
+
+        # 繪製累積報酬曲線圖
+        st.markdown("### 📈 累積損益曲線")
+        df_trades = df_trades.sort_values(by="出場日")
+        df_trades['累積損益'] = df_trades['損益金額'].cumsum()
+        
+        fig = px.line(df_trades, x="出場日", y="累積損益", markers=True, title="資金成長曲線", template="plotly_dark")
+        fig.update_traces(line_color='#00FF00' if total_profit >= 0 else '#FF0000', line_width=3, marker=dict(size=8))
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("目前尚無交易紀錄，請在上方表格新增資料。")
+
+# ==========================================
+# 頁面 6：互動 K 線圖
 # ==========================================
 elif page == "📈 互動 K 線圖 (分析)":
     st.title("📈 專業互動 K 線圖與均線分析")
