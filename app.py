@@ -7,14 +7,8 @@ import plotly.graph_objects as go
 
 st.set_page_config(page_title="HIOS 波段雷達", layout="wide", page_icon="🚀")
 
-# --- 側邊欄導覽列 ---
-st.sidebar.title("HIOS 旗艦系統 V7.0")
-page = st.sidebar.radio("請選擇功能模組：", [
-    "🌍 市場環境 (資金流向)", 
-    "🔍 雷達掃描 (綜合評分)", 
-    "🛡️ 持股防護罩 (健檢)",
-    "📈 互動 K 線圖 (分析)"
-])
+st.sidebar.title("HIOS 旗艦系統 V7.1")
+page = st.sidebar.radio("請選擇功能模組：", ["🌍 市場環境 (資金流向)", "🔍 雷達掃描 (綜合評分)", "🛡️ 持股防護罩 (健檢)", "📈 互動 K 線圖 (分析)"])
 st.sidebar.markdown("---")
 
 @st.cache_data
@@ -23,11 +17,10 @@ def get_stock_name(pure_code):
     return "未知"
 
 # ==========================================
-# 頁面 1：市場環境 (新增台股資金流向)
+# 頁面 1：市場環境
 # ==========================================
 if page == "🌍 市場環境 (資金流向)":
     st.title("🌍 全球總經與台股資金流向")
-    
     @st.cache_data(ttl=1800)
     def get_market_data(symbols_dict):
         data = {}
@@ -59,14 +52,11 @@ if page == "🌍 市場環境 (資金流向)":
         cols2 = st.columns(5)
         for i, (name, metrics) in enumerate(tw_data.items()):
             with cols2[i]:
-                if metrics:
-                    st.metric(label=name, value=f"{metrics['value']:.2f}", delta=f"{metrics['diff']:.2f} ({metrics['pct']:.2f}%)")
+                if metrics: st.metric(label=name, value=f"{metrics['value']:.2f}", delta=f"{metrics['diff']:.2f} ({metrics['pct']:.2f}%)")
                 else: st.metric(label=name, value="無資料", delta="-")
 
-    st.info("💡 資金流向判讀：若『櫃買指數』與『00881』漲幅大於大盤，代表資金正積極點火中小型科技股，為最佳進場時機！")
-
 # ==========================================
-# 頁面 2：雷達掃描 (新增綜合評分與修復 CSV)
+# 頁面 2：雷達掃描
 # ==========================================
 elif page == "🔍 雷達掃描 (綜合評分)":
     st.title("🚀 HIOS 波段雷達 (全維度評分版)")
@@ -92,7 +82,7 @@ elif page == "🔍 雷達掃描 (綜合評分)":
         target_tickers, stock_names_dict = [], {}
         if scan_mode == "自選股 (快速)":
             for t in [x.strip() for x in tickers_input.split(",")]:
-                pure_code = t.replace('.TW', '').replace('.TWO', '')
+                pure_code = t.split('.')[0] # 完美修復：遇到小數點直接切斷
                 if pure_code in twstock.codes:
                     stock_names_dict[pure_code] = twstock.codes[pure_code].name
                     target_tickers.append(f"{pure_code}{'.TW' if twstock.codes[pure_code].market == '上市' else '.TWO'}")
@@ -101,7 +91,7 @@ elif page == "🔍 雷達掃描 (綜合評分)":
 
         results, progress_bar, status_text = [], st.progress(0), st.empty()
         for i, ticker in enumerate(target_tickers):
-            pure_code = ticker.replace('.TW', '').replace('.TWO', '')
+            pure_code = ticker.split('.')[0] # 完美修復
             current_name = stock_names_dict.get(pure_code, "未知")
             status_text.text(f"正在掃描 {ticker} {current_name} ... ({i+1}/{len(target_tickers)})")
             try:
@@ -109,7 +99,6 @@ elif page == "🔍 雷達掃描 (綜合評分)":
                 if df.empty or len(df) < 60: continue
                 if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
                 
-                # 計算均線與 RSI
                 df['MA20'], df['MA60'], df['Vol'] = df['Close'].rolling(20).mean(), df['Close'].rolling(60).mean(), df['Volume']/1000
                 df['Vol_MA5'] = df['Vol'].rolling(5).mean()
                 delta = df['Close'].diff()
@@ -125,23 +114,19 @@ elif page == "🔍 雷達掃描 (綜合評分)":
                 b_cond = (v > vm5) and (v > b_vol_min) and (((c - m60) / m60 * 100) < b_ma60_bias)
                 
                 if a_cond or b_cond:
-                    # 計算綜合評分 (滿分100)
-                    score = 30 # 基礎分
+                    score = 30
                     if c > m20: score += 15
-                    if m20 > m60: score += 20 # 多頭排列
-                    if v > (vm5 * 2): score += 15 # 動能爆發
-                    if 50 <= rsi <= 75: score += 20 # RSI 強勢區
-                    
+                    if m20 > m60: score += 20
+                    if v > (vm5 * 2): score += 15
+                    if 50 <= rsi <= 75: score += 20
                     stars = "🌟" * (score // 20)
                     
                     results.append({
-                        "代號": pure_code, "名稱": current_name, "收盤價": round(c, 1),
-                        "綜合評分": f"{score}分 {stars}",
+                        "代號": pure_code, "名稱": current_name, "收盤價": round(c, 1), "綜合評分": f"{score}分 {stars}",
                         "符合策略": "+".join([s for s, cond in zip(["A策略", "B策略"], [a_cond, b_cond]) if cond]),
                         "MA20乖離(%)": round((c - m20) / m20 * 100, 1), "成交量(張)": int(v),
                         "建議買區": f"{m20:.1f} ~ {m20 * 1.02:.1f}", "停損價": round(m20 * 0.97, 1), "目標價": round(c * 1.15, 1),
-                        "狀態": "🟢 可佈局" if c <= (m20 * 1.02) else "🟡 觀察等待",
-                        "警示": "⚠️ 爆量風險" if v > (vm5 * 3) else ""
+                        "狀態": "🟢 可佈局" if c <= (m20 * 1.02) else "🟡 觀察等待", "警示": "⚠️ 爆量風險" if v > (vm5 * 3) else ""
                     })
             except: pass
             time.sleep(0.2)
@@ -149,12 +134,9 @@ elif page == "🔍 雷達掃描 (綜合評分)":
 
         status_text.text(f"掃描完成！共找出 {len(results)} 檔標的。")
         if results:
-            # 強制鎖定欄位順序，確保匯出正常
             columns_order = ["代號", "名稱", "收盤價", "綜合評分", "符合策略", "MA20乖離(%)", "成交量(張)", "建議買區", "停損價", "目標價", "狀態", "警示"]
             df_res = pd.DataFrame(results)[columns_order]
             st.dataframe(df_res, use_container_width=True)
-            
-            # 修復 CSV 匯出 (強制 utf-8-sig)
             csv = df_res.to_csv(index=False, encoding='utf-8-sig')
             st.download_button(label="📥 下載 CSV 報表 (支援 Excel 中文)", data=csv, file_name="hios_radar_report.csv", mime="text/csv")
         else: st.info("目前沒有符合條件的標的。")
