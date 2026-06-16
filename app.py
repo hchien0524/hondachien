@@ -8,13 +8,13 @@ import plotly.express as px
 
 st.set_page_config(page_title="HIOS 波段雷達", layout="wide", page_icon="🚀")
 
-st.sidebar.title("HIOS 旗艦系統 V8.0")
+st.sidebar.title("HIOS 旗艦系統 V9.0")
 page = st.sidebar.radio("請選擇功能模組：", [
     "🌍 市場環境 (資金流向)", 
     "🔍 雷達掃描 (綜合評分)", 
-    "🗂️ 股票池管理 (自選)",     # 新增功能 1
+    "🗂️ 股票池管理 (AI協作)",   # 升級
     "🛡️ 持股防護罩 (健檢)",
-    "📊 績效與交易紀錄",        # 新增功能 2
+    "📊 績效與交易紀錄",        # 升級
     "📈 互動 K 線圖 (分析)"
 ])
 st.sidebar.markdown("---")
@@ -150,17 +150,24 @@ elif page == "🔍 雷達掃描 (綜合評分)":
         else: st.info("目前沒有符合條件的標的。")
 
 # ==========================================
-# 頁面 3：股票池管理 (新增)
+# 頁面 3：股票池管理 (新增名稱與 Manus 匯出)
 # ==========================================
-elif page == "🗂️ 股票池管理 (自選)":
-    st.title("🗂️ 核心股票池管理")
-    st.markdown("將雷達掃描出的潛力標的加入此處，進行分級追蹤。")
+elif page == "🗂️ 股票池管理 (AI協作)":
+    st.title("🗂️ 核心股票池管理與 AI 協作")
+    st.markdown("將雷達掃描出的潛力標的加入此處。您可以將資料匯出存檔，或一鍵複製給 Manus 進行深度分析。")
     
+    # 讀取存檔功能
+    uploaded_pool = st.file_uploader("📤 讀取股票池存檔 (CSV)", type=["csv"], key="pool_uploader")
+    if uploaded_pool is not None:
+        st.session_state['stock_pool'] = pd.read_csv(uploaded_pool)
+        st.success("✅ 股票池存檔讀取成功！")
+
     if 'stock_pool' not in st.session_state:
         st.session_state['stock_pool'] = pd.DataFrame({
             "代號": ["3413", "3015", "8210"],
+            "名稱": ["京鼎", "全漢", "勤誠"],
             "級別": ["A級核心池", "B級核心池", "觀察池"],
-            "追蹤筆記": ["投信連買，準備突破", "股本小，動能強", "回測月線有守"]
+            "追蹤筆記": ["投信連買3日，乖離極低，準備50萬試單", "股本小，昨日爆量突破季線", "回測月線有守，等待大盤點火"]
         })
     
     edited_pool = st.data_editor(
@@ -168,11 +175,29 @@ elif page == "🗂️ 股票池管理 (自選)":
         num_rows="dynamic", 
         use_container_width=True,
         column_config={
-            "級別": st.column_config.SelectboxColumn("級別", options=["A級核心池", "B級核心池", "觀察池"], required=True)
+            "級別": st.column_config.SelectboxColumn("級別", options=["A級核心池", "B級核心池", "觀察池"], required=True),
+            "追蹤筆記": st.column_config.TextColumn("追蹤筆記 (可詳細記錄籌碼與戰略)", width="large")
         }
     )
     st.session_state['stock_pool'] = edited_pool
-    st.info("💡 提示：您可以直接在表格內修改代號、切換級別，或在最下方新增一列。")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        # 下載存檔功能
+        csv_pool = edited_pool.to_csv(index=False).encode('utf-8-sig')
+        st.download_button(label="📥 下載股票池存檔 (CSV)", data=csv_pool, file_name="hios_stock_pool.csv", mime="text/csv")
+    
+    with col2:
+        # 產生 Manus 分析報告
+        if st.button("🤖 產生 Manus 專屬分析報告 (一鍵複製)"):
+            report = "Manus 指揮官呼叫，請幫我針對以下《核心股票池》的標的進行深度籌碼與技術面分析，並給出明日的作戰建議：\n\n"
+            for idx, row in edited_pool.iterrows():
+                report += f"### {row['代號']} {row['名稱']} [{row['級別']}]\n"
+                report += f"- **我的追蹤筆記**：{row['追蹤筆記']}\n\n"
+            report += "---\n請用專業客觀的角度，輔助我說明我少看的論點，並給我指導。"
+            
+            st.success("✅ 報告已生成！請點擊下方黑色區塊右上角的「複製」圖示，貼給 Manus。")
+            st.code(report, language="markdown")
 
 # ==========================================
 # 頁面 4：持股防護罩
@@ -215,12 +240,18 @@ elif page == "🛡️ 持股防護罩 (健檢)":
         if results: st.dataframe(pd.DataFrame(results), use_container_width=True)
 
 # ==========================================
-# 頁面 5：績效與交易紀錄 (新增)
+# 頁面 5：績效與交易紀錄 (新增存檔功能)
 # ==========================================
 elif page == "📊 績效與交易紀錄":
     st.title("📊 交易紀錄與績效儀表板")
+    st.markdown("記錄您的實戰軌跡。**請務必在關閉網頁前點擊「下載存檔」，下次開啟時再「讀取存檔」。**")
     
-    # 預設模擬交易紀錄 (讓圖表有資料可以畫)
+    # 讀取存檔功能
+    uploaded_trades = st.file_uploader("📤 讀取交易紀錄存檔 (CSV)", type=["csv"], key="trade_uploader")
+    if uploaded_trades is not None:
+        st.session_state['trade_records'] = pd.read_csv(uploaded_trades)
+        st.success("✅ 交易紀錄讀取成功！")
+
     if 'trade_records' not in st.session_state:
         st.session_state['trade_records'] = pd.DataFrame({
             "代號": ["2382", "3231", "2379", "3035", "8299"],
@@ -242,6 +273,10 @@ elif page == "📊 績效與交易紀錄":
     )
     st.session_state['trade_records'] = edited_trades
 
+    # 下載存檔功能
+    csv_trades = edited_trades.to_csv(index=False).encode('utf-8-sig')
+    st.download_button(label="📥 下載交易紀錄存檔 (CSV)", data=csv_trades, file_name="hios_trade_records.csv", mime="text/csv")
+
     # 計算績效數據
     df_trades = edited_trades.copy()
     if not df_trades.empty:
@@ -261,7 +296,6 @@ elif page == "📊 績效與交易紀錄":
         col2.metric("整體勝率", f"{win_rate:.1f} %")
         col3.metric("累積總損益", f"{total_profit:,.0f} 元", delta="獲利" if total_profit > 0 else "虧損")
 
-        # 繪製累積報酬曲線圖
         st.markdown("### 📈 累積損益曲線")
         df_trades = df_trades.sort_values(by="出場日")
         df_trades['累積損益'] = df_trades['損益金額'].cumsum()
@@ -298,5 +332,4 @@ elif page == "📈 互動 K 線圖 (分析)":
                     fig.add_trace(go.Scatter(x=df.index, y=df['MA60'], line=dict(color='blue', width=1.5), name='季線 (MA60)'))
                     fig.update_layout(title=f"{name} ({chart_ticker}) 近半年技術線圖", yaxis_title='股價 (元)', xaxis_rangeslider_visible=False, template='plotly_dark', height=600)
                     st.plotly_chart(fig, use_container_width=True)
-                else: st.error("找不到該檔股票的資料。")
-            except Exception as e: st.error(f"繪圖發生錯誤: {e}")
+                
