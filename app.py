@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 
 st.set_page_config(page_title="HIOS 波段雷達", layout="wide", page_icon="🚀")
 
-st.sidebar.title("HIOS 旗艦系統 V7.1")
+st.sidebar.title("HIOS 旗艦系統 V7.2")
 page = st.sidebar.radio("請選擇功能模組：", ["🌍 市場環境 (資金流向)", "🔍 雷達掃描 (綜合評分)", "🛡️ 持股防護罩 (健檢)", "📈 互動 K 線圖 (分析)"])
 st.sidebar.markdown("---")
 
@@ -82,7 +82,7 @@ elif page == "🔍 雷達掃描 (綜合評分)":
         target_tickers, stock_names_dict = [], {}
         if scan_mode == "自選股 (快速)":
             for t in [x.strip() for x in tickers_input.split(",")]:
-                pure_code = t.split('.')[0] # 完美修復：遇到小數點直接切斷
+                pure_code = t.split('.')[0] 
                 if pure_code in twstock.codes:
                     stock_names_dict[pure_code] = twstock.codes[pure_code].name
                     target_tickers.append(f"{pure_code}{'.TW' if twstock.codes[pure_code].market == '上市' else '.TWO'}")
@@ -91,7 +91,7 @@ elif page == "🔍 雷達掃描 (綜合評分)":
 
         results, progress_bar, status_text = [], st.progress(0), st.empty()
         for i, ticker in enumerate(target_tickers):
-            pure_code = ticker.split('.')[0] # 完美修復
+            pure_code = ticker.split('.')[0] 
             current_name = stock_names_dict.get(pure_code, "未知")
             status_text.text(f"正在掃描 {ticker} {current_name} ... ({i+1}/{len(target_tickers)})")
             try:
@@ -137,8 +137,10 @@ elif page == "🔍 雷達掃描 (綜合評分)":
             columns_order = ["代號", "名稱", "收盤價", "綜合評分", "符合策略", "MA20乖離(%)", "成交量(張)", "建議買區", "停損價", "目標價", "狀態", "警示"]
             df_res = pd.DataFrame(results)[columns_order]
             st.dataframe(df_res, use_container_width=True)
-            csv = df_res.to_csv(index=False, encoding='utf-8-sig')
-            st.download_button(label="📥 下載 CSV 報表 (支援 Excel 中文)", data=csv, file_name="hios_radar_report.csv", mime="text/csv")
+            
+            # 完美修復：強制轉成 bytes 並壓上 utf-8-sig 的 BOM 標記
+            csv_bytes = df_res.to_csv(index=False).encode('utf-8-sig')
+            st.download_button(label="📥 下載 CSV 報表 (支援 Excel 中文)", data=csv_bytes, file_name="hios_radar_report.csv", mime="text/csv")
         else: st.info("目前沒有符合條件的標的。")
 
 # ==========================================
