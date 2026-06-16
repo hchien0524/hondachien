@@ -3,15 +3,15 @@ import yfinance as yf
 import pandas as pd
 import time
 import twstock
-import plotly.graph_objects as go  # 導入頂級互動繪圖套件
+import plotly.graph_objects as go
 
 st.set_page_config(page_title="HIOS 波段雷達", layout="wide", page_icon="🚀")
 
 # --- 側邊欄導覽列 ---
-st.sidebar.title("HIOS 旗艦系統")
+st.sidebar.title("HIOS 旗艦系統 V7.0")
 page = st.sidebar.radio("請選擇功能模組：", [
-    "🌍 市場環境 (首頁)", 
-    "🔍 雷達掃描 (選股)", 
+    "🌍 市場環境 (資金流向)", 
+    "🔍 雷達掃描 (綜合評分)", 
     "🛡️ 持股防護罩 (健檢)",
     "📈 互動 K 線圖 (分析)"
 ])
@@ -23,15 +23,15 @@ def get_stock_name(pure_code):
     return "未知"
 
 # ==========================================
-# 頁面 1：市場環境
+# 頁面 1：市場環境 (新增台股資金流向)
 # ==========================================
-if page == "🌍 市場環境 (首頁)":
-    st.title("🌍 全球市場環境與資金風向")
+if page == "🌍 市場環境 (資金流向)":
+    st.title("🌍 全球總經與台股資金流向")
+    
     @st.cache_data(ttl=1800)
-    def get_macro_data():
-        symbols = {"S&P 500": "^GSPC", "那斯達克": "^IXIC", "費城半導體": "^SOX", "VIX 恐慌指數": "^VIX", "美債10年殖利率": "^TNX"}
+    def get_market_data(symbols_dict):
         data = {}
-        for name, sym in symbols.items():
+        for name, sym in symbols_dict.items():
             try:
                 hist = yf.Ticker(sym).history(period="5d")
                 if len(hist) >= 2:
@@ -40,26 +40,39 @@ if page == "🌍 市場環境 (首頁)":
             except: data[name] = None
         return data
 
-    with st.spinner("正在載入全球總經數據..."):
-        macro_data = get_macro_data()
-        cols = st.columns(5)
+    with st.spinner("正在載入市場數據..."):
+        st.subheader("🇺🇸 全球總經天氣")
+        macro_symbols = {"S&P 500": "^GSPC", "那斯達克": "^IXIC", "費城半導體": "^SOX", "VIX 恐慌指數": "^VIX", "美債10年殖利率": "^TNX"}
+        macro_data = get_market_data(macro_symbols)
+        cols1 = st.columns(5)
         for i, (name, metrics) in enumerate(macro_data.items()):
-            with cols[i]:
+            with cols1[i]:
                 if metrics:
                     inv_color = "inverse" if "VIX" in name or "殖利率" in name else "normal"
                     st.metric(label=name, value=f"{metrics['value']:.2f}", delta=f"{metrics['diff']:.2f} ({metrics['pct']:.2f}%)", delta_color=inv_color)
                 else: st.metric(label=name, value="無資料", delta="-")
-    st.markdown("---")
-    st.info("💡 戰略提示：若 VIX > 20 或 美債殖利率急升，建議減少資金水位；若費半大漲，可積極佈局突破型標的。")
+        
+        st.markdown("---")
+        st.subheader("🇹🇼 台股資金風向球 (板塊輪動)")
+        tw_symbols = {"加權指數 (大盤)": "^TWII", "櫃買指數 (中小型)": "^TWOII", "0050 (大型權值)": "0050.TW", "00881 (5G半導體)": "00881.TW", "00878 (高股息避險)": "00878.TW"}
+        tw_data = get_market_data(tw_symbols)
+        cols2 = st.columns(5)
+        for i, (name, metrics) in enumerate(tw_data.items()):
+            with cols2[i]:
+                if metrics:
+                    st.metric(label=name, value=f"{metrics['value']:.2f}", delta=f"{metrics['diff']:.2f} ({metrics['pct']:.2f}%)")
+                else: st.metric(label=name, value="無資料", delta="-")
+
+    st.info("💡 資金流向判讀：若『櫃買指數』與『00881』漲幅大於大盤，代表資金正積極點火中小型科技股，為最佳進場時機！")
 
 # ==========================================
-# 頁面 2：雷達掃描 (加入 CSV 下載)
+# 頁面 2：雷達掃描 (新增綜合評分與修復 CSV)
 # ==========================================
-elif page == "🔍 雷達掃描 (選股)":
-    st.title("🚀 HIOS 波段雷達 (全市場掃描)")
+elif page == "🔍 雷達掃描 (綜合評分)":
+    st.title("🚀 HIOS 波段雷達 (全維度評分版)")
     
     @st.cache_data
-    def get_market_data(market_type):
+    def get_market_tickers(market_type):
         tickers, names = [], {}
         target_market = "上市" if "上市" in market_type else "上櫃"
         for code, info in twstock.codes.items():
@@ -84,7 +97,7 @@ elif page == "🔍 雷達掃描 (選股)":
                     stock_names_dict[pure_code] = twstock.codes[pure_code].name
                     target_tickers.append(f"{pure_code}{'.TW' if twstock.codes[pure_code].market == '上市' else '.TWO'}")
                 else: target_tickers.append(f"{pure_code}.TW")
-        else: target_tickers, stock_names_dict = get_market_data(scan_mode)
+        else: target_tickers, stock_names_dict = get_market_tickers(scan_mode)
 
         results, progress_bar, status_text = [], st.progress(0), st.empty()
         for i, ticker in enumerate(target_tickers):
@@ -95,17 +108,35 @@ elif page == "🔍 雷達掃描 (選股)":
                 df = yf.download(ticker, period="6mo", progress=False)
                 if df.empty or len(df) < 60: continue
                 if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+                
+                # 計算均線與 RSI
                 df['MA20'], df['MA60'], df['Vol'] = df['Close'].rolling(20).mean(), df['Close'].rolling(60).mean(), df['Volume']/1000
                 df['Vol_MA5'] = df['Vol'].rolling(5).mean()
+                delta = df['Close'].diff()
+                gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+                loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                rs = gain / loss
+                df['RSI'] = 100 - (100 / (1 + rs))
+                
                 latest = df.iloc[-1]
-                c, m20, m60, v, vm5 = float(latest['Close']), float(latest['MA20']), float(latest['MA60']), float(latest['Vol']), float(latest['Vol_MA5'])
+                c, m20, m60, v, vm5, rsi = float(latest['Close']), float(latest['MA20']), float(latest['MA60']), float(latest['Vol']), float(latest['Vol_MA5']), float(latest['RSI'])
                 
                 a_cond = (c > m20) and (((c - m20) / m20 * 100) < a_ma20_bias)
                 b_cond = (v > vm5) and (v > b_vol_min) and (((c - m60) / m60 * 100) < b_ma60_bias)
                 
                 if a_cond or b_cond:
+                    # 計算綜合評分 (滿分100)
+                    score = 30 # 基礎分
+                    if c > m20: score += 15
+                    if m20 > m60: score += 20 # 多頭排列
+                    if v > (vm5 * 2): score += 15 # 動能爆發
+                    if 50 <= rsi <= 75: score += 20 # RSI 強勢區
+                    
+                    stars = "🌟" * (score // 20)
+                    
                     results.append({
                         "代號": pure_code, "名稱": current_name, "收盤價": round(c, 1),
+                        "綜合評分": f"{score}分 {stars}",
                         "符合策略": "+".join([s for s, cond in zip(["A策略", "B策略"], [a_cond, b_cond]) if cond]),
                         "MA20乖離(%)": round((c - m20) / m20 * 100, 1), "成交量(張)": int(v),
                         "建議買區": f"{m20:.1f} ~ {m20 * 1.02:.1f}", "停損價": round(m20 * 0.97, 1), "目標價": round(c * 1.15, 1),
@@ -118,11 +149,14 @@ elif page == "🔍 雷達掃描 (選股)":
 
         status_text.text(f"掃描完成！共找出 {len(results)} 檔標的。")
         if results:
-            df_res = pd.DataFrame(results)
+            # 強制鎖定欄位順序，確保匯出正常
+            columns_order = ["代號", "名稱", "收盤價", "綜合評分", "符合策略", "MA20乖離(%)", "成交量(張)", "建議買區", "停損價", "目標價", "狀態", "警示"]
+            df_res = pd.DataFrame(results)[columns_order]
             st.dataframe(df_res, use_container_width=True)
-            # 新增：CSV 下載按鈕 (使用 utf-8-sig 確保 Excel 開啟中文不亂碼)
-            csv = df_res.to_csv(index=False).encode('utf-8-sig')
-            st.download_button(label="📥 下載 CSV 報表", data=csv, file_name="hios_radar_report.csv", mime="text/csv")
+            
+            # 修復 CSV 匯出 (強制 utf-8-sig)
+            csv = df_res.to_csv(index=False, encoding='utf-8-sig')
+            st.download_button(label="📥 下載 CSV 報表 (支援 Excel 中文)", data=csv, file_name="hios_radar_report.csv", mime="text/csv")
         else: st.info("目前沒有符合條件的標的。")
 
 # ==========================================
@@ -166,12 +200,10 @@ elif page == "🛡️ 持股防護罩 (健檢)":
         if results: st.dataframe(pd.DataFrame(results), use_container_width=True)
 
 # ==========================================
-# 頁面 4：互動 K 線圖 (全新視覺化模組)
+# 頁面 4：互動 K 線圖
 # ==========================================
 elif page == "📈 互動 K 線圖 (分析)":
     st.title("📈 專業互動 K 線圖與均線分析")
-    st.markdown("輸入股票代號，系統將自動繪製包含 MA20 (月線) 與 MA60 (季線) 的專業技術線圖。")
-    
     col1, col2 = st.columns([1, 3])
     with col1:
         chart_ticker = st.text_input("請輸入股票代號 (例如: 2382)", "3413")
@@ -182,33 +214,16 @@ elif page == "📈 互動 K 線圖 (分析)":
             market = twstock.codes.get(chart_ticker, None)
             ticker_symbol = f"{chart_ticker}{'.TW' if market and market.market == '上市' else '.TWO'}"
             name = get_stock_name(chart_ticker)
-            
             try:
                 df = yf.download(ticker_symbol, period="6mo", progress=False)
                 if df.empty: df = yf.download(f"{chart_ticker}{'.TWO' if ticker_symbol.endswith('.TW') else '.TW'}", period="6mo", progress=False)
-                
                 if not df.empty:
                     if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
-                    df['MA20'] = df['Close'].rolling(20).mean()
-                    df['MA60'] = df['Close'].rolling(60).mean()
-                    
-                    # 使用 Plotly 繪製專業 K 線圖
-                    fig = go.Figure(data=[go.Candlestick(
-                        x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'],
-                        name='K線', increasing_line_color='red', decreasing_line_color='green' # 台股紅漲綠跌
-                    )])
+                    df['MA20'], df['MA60'] = df['Close'].rolling(20).mean(), df['Close'].rolling(60).mean()
+                    fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='K線', increasing_line_color='red', decreasing_line_color='green')])
                     fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], line=dict(color='orange', width=1.5), name='月線 (MA20)'))
                     fig.add_trace(go.Scatter(x=df.index, y=df['MA60'], line=dict(color='blue', width=1.5), name='季線 (MA60)'))
-                    
-                    fig.update_layout(
-                        title=f"{name} ({chart_ticker}) 近半年技術線圖",
-                        yaxis_title='股價 (元)',
-                        xaxis_rangeslider_visible=False,
-                        template='plotly_dark', # 預設深色科技風
-                        height=600
-                    )
+                    fig.update_layout(title=f"{name} ({chart_ticker}) 近半年技術線圖", yaxis_title='股價 (元)', xaxis_rangeslider_visible=False, template='plotly_dark', height=600)
                     st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.error("找不到該檔股票的資料，請確認代號是否正確。")
-            except Exception as e:
-                st.error(f"繪圖發生錯誤: {e}")
+                else: st.error("找不到該檔股票的資料。")
+            except Exception as e: st.error(f"繪圖發生錯誤: {e}")
