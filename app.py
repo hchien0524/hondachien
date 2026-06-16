@@ -8,9 +8,9 @@ import plotly.express as px
 
 st.set_page_config(page_title="HIOS 波段雷達", layout="wide", page_icon="🚀")
 
-st.sidebar.title("HIOS 旗艦系統 V9.2")
+st.sidebar.title("HIOS 旗艦系統 V10.0")
 page = st.sidebar.radio("請選擇功能模組：", [
-    "🌍 市場環境 (資金流向)", "🔍 雷達掃描 (綜合評分)", "🗂️ 股票池管理 (AI協作)", 
+    "🌍 市場環境 (資金流向)", "🔍 雷達掃描 (白箱解析)", "🗂️ 股票池管理 (超級AI)", 
     "🛡️ 持股防護罩 (健檢)", "📊 績效與交易紀錄", "📈 互動 K 線圖 (分析)"
 ])
 st.sidebar.markdown("---")
@@ -57,10 +57,10 @@ if page == "🌍 市場環境 (資金流向)":
                 else: st.metric(label=name, value="無資料", delta="-")
 
 # ==========================================
-# 頁面 2：雷達掃描
+# 頁面 2：雷達掃描 (新增評分明細)
 # ==========================================
-elif page == "🔍 雷達掃描 (綜合評分)":
-    st.title("🚀 HIOS 波段雷達 (全維度評分版)")
+elif page == "🔍 雷達掃描 (白箱解析)":
+    st.title("🚀 HIOS 波段雷達 (白箱解析版)")
     
     @st.cache_data
     def get_market_tickers(market_type):
@@ -114,9 +114,18 @@ elif page == "🔍 雷達掃描 (綜合評分)":
                 b_cond = (v > vm5) and (v > b_vol_min) and (((c - m60) / m60 * 100) < b_ma60_bias)
                 
                 if a_cond or b_cond:
-                    score = 30 + (15 if c > m20 else 0) + (20 if m20 > m60 else 0) + (15 if v > (vm5 * 2) else 0) + (20 if 50 <= rsi <= 75 else 0)
+                    # 白箱解析：記錄加分原因
+                    score = 30
+                    details = []
+                    if c > m20: score += 15; details.append("站上月線")
+                    if m20 > m60: score += 20; details.append("多頭排列")
+                    if v > (vm5 * 2): score += 15; details.append("動能爆發")
+                    if 50 <= rsi <= 75: score += 20; details.append("RSI強勢")
+                    
                     results.append({
-                        "代號": pure_code, "名稱": current_name, "收盤價": round(c, 1), "綜合評分": f"{score}分 {'🌟' * (score // 20)}",
+                        "代號": pure_code, "名稱": current_name, "收盤價": round(c, 1), 
+                        "綜合評分": f"{score}分 {'🌟' * (score // 20)}",
+                        "評分明細": " + ".join(details), # 新增欄位
                         "符合策略": "+".join([s for s, cond in zip(["A策略", "B策略"], [a_cond, b_cond]) if cond]),
                         "MA20乖離(%)": round((c - m20) / m20 * 100, 1), "成交量(張)": int(v),
                         "建議買區": f"{m20:.1f} ~ {m20 * 1.02:.1f}", "停損價": round(m20 * 0.97, 1), "目標價": round(c * 1.15, 1),
@@ -128,16 +137,16 @@ elif page == "🔍 雷達掃描 (綜合評分)":
 
         status_text.text(f"掃描完成！共找出 {len(results)} 檔標的。")
         if results:
-            df_res = pd.DataFrame(results)[["代號", "名稱", "收盤價", "綜合評分", "符合策略", "MA20乖離(%)", "成交量(張)", "建議買區", "停損價", "目標價", "狀態", "警示"]]
+            df_res = pd.DataFrame(results)[["代號", "名稱", "收盤價", "綜合評分", "評分明細", "符合策略", "MA20乖離(%)", "成交量(張)", "建議買區", "停損價", "目標價", "狀態", "警示"]]
             st.dataframe(df_res, use_container_width=True)
             st.download_button("📥 下載 CSV 報表", data=df_res.to_csv(index=False).encode('utf-8-sig'), file_name="hios_radar.csv", mime="text/csv")
         else: st.info("目前沒有符合條件的標的。")
 
 # ==========================================
-# 頁面 3：股票池管理 (AI協作)
+# 頁面 3：股票池管理 (超級 AI 協作)
 # ==========================================
-elif page == "🗂️ 股票池管理 (AI協作)":
-    st.title("🗂️ 核心股票池管理與 AI 協作")
+elif page == "🗂️ 股票池管理 (超級AI)":
+    st.title("🗂️ 核心股票池管理與超級 AI 協作")
     
     uploaded_pool = st.file_uploader("📤 讀取股票池存檔 (CSV)", type=["csv"])
     if uploaded_pool is not None:
@@ -147,7 +156,7 @@ elif page == "🗂️ 股票池管理 (AI協作)":
     if 'stock_pool' not in st.session_state:
         st.session_state['stock_pool'] = pd.DataFrame({
             "代號": ["3413", "3015"], "名稱": ["京鼎", "全漢"], "級別": ["A級核心池", "B級核心池"],
-            "追蹤筆記": ["投信連買3日，乖離極低，準備50萬試單", "股本小，昨日爆量突破季線"]
+            "追蹤筆記": ["技術面85分(多頭排列+RSI強勢)，準備50萬試單", "股本小，昨日爆量突破季線"]
         })
     
     edited_pool = st.data_editor(
@@ -161,17 +170,21 @@ elif page == "🗂️ 股票池管理 (AI協作)":
     with col1:
         st.download_button("📥 下載股票池存檔 (CSV)", data=edited_pool.to_csv(index=False).encode('utf-8-sig'), file_name="hios_pool.csv", mime="text/csv")
     with col2:
-        if st.button("🤖 產生 Manus 分析報告 (一鍵複製)"):
-            report = "Manus 指揮官呼叫，請幫我針對以下《核心股票池》的標的進行深度分析：\n\n"
+        if st.button("🤖 產生 Manus 超級分析指令 (一鍵複製)"):
+            report = "Manus 指揮官呼叫！請啟動你的「聯網搜尋能力」，幫我針對以下《核心股票池》進行全方位健檢：\n\n"
             for _, row in edited_pool.iterrows():
-                # 完美防呆：使用 .get() 確保即使欄位不存在也不會報錯
-                c_code = row.get('代號', '未知代號')
+                c_code = row.get('代號', '')
                 c_name = row.get('名稱', '')
-                c_level = row.get('級別', '未分類')
-                c_note = row.get('追蹤筆記', '無筆記')
-                report += f"### {c_code} {c_name} [{c_level}]\n- **追蹤筆記**：{c_note}\n\n"
-            report += "---\n請用專業客觀的角度，輔助我說明我少看的論點，並給我指導。"
-            st.success("✅ 報告已生成！請點擊下方複製圖示貼給 Manus。")
+                c_level = row.get('級別', '')
+                c_note = row.get('追蹤筆記', '')
+                report += f"### {c_code} {c_name} [{c_level}]\n- **APP技術面筆記**：{c_note}\n\n"
+            
+            report += "---\n**【Manus 任務指令】**\n"
+            report += "1. **籌碼面**：請聯網查詢上述標的近 3 日的「投信/外資買賣超」與「融資券變化」。\n"
+            report += "2. **基本面**：請聯網查詢最新的「營收狀況」或「法說會/產業新聞」。\n"
+            report += "3. **戰略指導**：結合 APP 給的技術面筆記與你查到的籌碼面，用專業客觀的角度，給我明日的具體進出場建議，並指出我可能忽略的風險。\n"
+            
+            st.success("✅ 超級指令已生成！請點擊下方複製圖示貼給 Manus，我會立刻為您聯網找資料！")
             st.code(report, language="markdown")
 
 # ==========================================
@@ -279,7 +292,4 @@ elif page == "📈 互動 K 線圖 (分析)":
                     fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='K線', increasing_line_color='red', decreasing_line_color='green')])
                     fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], line=dict(color='orange', width=1.5), name='月線 (MA20)'))
                     fig.add_trace(go.Scatter(x=df.index, y=df['MA60'], line=dict(color='blue', width=1.5), name='季線 (MA60)'))
-                    fig.update_layout(title=f"{name} ({chart_ticker}) 近半年技術線圖", yaxis_title='股價 (元)', xaxis_rangeslider_visible=False, template='plotly_dark', height=600)
-                    st.plotly_chart(fig, use_container_width=True)
-                else: st.error("找不到該檔股票的資料。")
-            except Exception as e: st.error(f"繪圖發生錯誤: {e}")
+                    fig.update_layout(title=f"{name} ({chart_ticker}) 近半年技術線圖", yaxis_title='股價 (元)', xaxis
