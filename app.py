@@ -47,15 +47,38 @@ def get_tickers(m):
 
 if run_btn:
     chip_data = {}
-    if csv_file:
+        if csv_file:
         try:
-            cdf = pd.read_csv(csv_file)
+            # 自動破解 Big5 編碼與跳過多餘表頭
+            try:
+                cdf = pd.read_csv(csv_file, encoding='utf-8')
+            except:
+                csv_file.seek(0)
+                cdf = pd.read_csv(csv_file, encoding='big5', skiprows=1)
+                if not any('代號' in str(c) or '代碼' in str(c) for c in cdf.columns):
+                    csv_file.seek(0)
+                    cdf = pd.read_csv(csv_file, encoding='big5', skiprows=2)
+
             c_col = [c for c in cdf.columns if '代號' in c or '代碼' in c or 'Code' in c][0]
             t_col = [c for c in cdf.columns if '投信' in c][0]
             f_col = [c for c in cdf.columns if '外資' in c][0]
+            
             for _, r in cdf.iterrows():
-                chip_data[str(r[c_col]).strip()] = {"投": float(str(r[t_col]).replace(',','')), "外": float(str(r[f_col]).replace(',',''))}
-        except: st.error("CSV 解析失敗，請確認檔案格式。")
+                try:
+                    t_val = str(r[t_col]).replace(',', '').strip()
+                    f_val = str(r[f_col]).replace(',', '').strip()
+                    t_num = float(t_val) if t_val not in ['nan', '', '-'] else 0
+                    f_num = float(f_val) if f_val not in ['nan', '', '-'] else 0
+                    
+                    # 證交所單位是「股」，若數字大於一萬，自動除以 1000 轉成「張」
+                    if abs(t_num) > 10000 or abs(f_num) > 10000:
+                        t_num, f_num = t_num / 1000, f_num / 1000
+                        
+                    chip_data[str(r[c_col]).strip()] = {"投": t_num, "外": f_num}
+                except: pass
+        except Exception as e: 
+            st.error(f"CSV 解析失敗，請確認檔案格式。錯誤細節: {e}")
+
 
     tt, nd = [], {}
     if sm == "自選":
