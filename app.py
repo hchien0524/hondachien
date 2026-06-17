@@ -8,8 +8,8 @@ import re
 # ==========================================
 # 1. 系統初始化與 UI 設定
 # ==========================================
-st.set_page_config(page_title="HIOS Wave Radar V18.6", layout="wide")
-st.title("🌊 HIOS Wave Radar V18.6 - 機構級量化雷達 (全市場版)")
+st.set_page_config(page_title="HIOS Wave Radar V18.7", layout="wide")
+st.title("🌊 HIOS Wave Radar V18.7 - 機構級量化雷達 (終極校正版)")
 st.markdown("### 雙核心引擎：低乖離防守 × 投信動能攻擊 (支援上市/上櫃)")
 
 # ==========================================
@@ -48,7 +48,6 @@ def fetch_and_calculate(df_chips):
         stock_code = str(row['代號']).strip()
         
         try:
-            # V18.6 雙引擎尋標：先找上市 (.TW)，找不到就找上櫃 (.TWO)
             yf_code = f"{stock_code}.TW" 
             hist = yf.Ticker(yf_code).history(period="3mo")
             
@@ -57,7 +56,7 @@ def fetch_and_calculate(df_chips):
                 hist = yf.Ticker(yf_code).history(period="3mo")
                 
             if len(hist) < 60:
-                continue # 真的找不到或資料不足，跳過
+                continue
                 
             hist['MA20'] = hist['Close'].rolling(window=20).mean()
             hist['MA60'] = hist['Close'].rolling(window=60).mean()
@@ -98,7 +97,6 @@ def fetch_and_calculate(df_chips):
 def v18_funnel_filter_and_score(df, intraday_mode):
     filtered_df = df.copy()
     
-    # V18.6 確保欄位型態正確，避免 str 與 int 比較錯誤
     filtered_df['投信買賣超'] = pd.to_numeric(filtered_df['投信買賣超'], errors='coerce').fillna(0)
     filtered_df['外資買賣超'] = pd.to_numeric(filtered_df['外資買賣超'], errors='coerce').fillna(0)
     filtered_df['收盤價'] = pd.to_numeric(filtered_df['收盤價'], errors='coerce').fillna(0)
@@ -176,10 +174,14 @@ if uploaded_file is not None:
         df_raw = pd.read_csv(io.StringIO(decoded_text), skiprows=skip_rows)
         
         df_raw.columns = df_raw.columns.str.strip()
+        
+        # V18.7 修正：加入證交所專屬的「外陸資」超長欄位名稱
         col_mapping = {
             '證券代號': '代號', '股票代號': '代號',
             '證券名稱': '名稱', '股票名稱': '名稱',
-            '投信買賣超股數': '投信買賣超', '外資買賣超股數': '外資買賣超'
+            '投信買賣超股數': '投信買賣超', 
+            '外資買賣超股數': '外資買賣超',
+            '外陸資買賣超股數(不含外資自營商)': '外資買賣超'
         }
         df_raw = df_raw.rename(columns=col_mapping)
         
@@ -188,18 +190,24 @@ if uploaded_file is not None:
             df_raw = df_raw[df_raw['代號'].str.match(r'^\d{4}$')]
             df_raw = df_raw.reset_index(drop=True)
         
-        # V18.6 暴力轉型：確保所有計算欄位絕對是數字
         for col in ['投信買賣超', '外資買賣超', '周轉率']:
             if col not in df_raw.columns:
                 df_raw[col] = 0
             df_raw[col] = pd.to_numeric(df_raw[col].astype(str).str.replace(',', '').str.strip(), errors='coerce').fillna(0)
+            
+        # V18.7 修正：AI 智慧單位轉換 (股 -> 張)
+        # 如果發現最大值超過 20000，極大機率是官方的「股數」，自動除以 1000
+        if df_raw['投信買賣超'].abs().max() > 20000:
+            df_raw['投信買賣超'] = np.round(df_raw['投信買賣超'] / 1000, 0)
+        if df_raw['外資買賣超'].abs().max() > 20000:
+            df_raw['外資買賣超'] = np.round(df_raw['外資買賣超'] / 1000, 0)
         
         if '代號' not in df_raw.columns:
             st.error(f"⚠️ 找不到「代號」欄位！目前 CSV 擁有的欄位為：{list(df_raw.columns)}")
         else:
             st.success(f"✅ 成功匯入籌碼資料，過濾權證與雜訊後，共保留 {len(df_raw)} 檔純血普通股 (包含上市與上櫃)。")
             
-            if st.button("🚀 啟動 V18.6 漏斗掃描"):
+            if st.button("🚀 啟動 V18.7 漏斗掃描"):
                 with st.spinner("正在聯網獲取即時報價與計算指標..."):
                     df_analyzed = fetch_and_calculate(df_raw)
                     df_final = v18_funnel_filter_and_score(df_analyzed, is_intraday)
@@ -208,8 +216,8 @@ if uploaded_file is not None:
                         st.balloons()
                         mode_text = "盤中狙擊模式 (已放寬量能濾網)" if is_intraday else "盤後嚴格模式 (全鐵門啟動)"
                         st.markdown(f"### 🎯 掃描完成！[{mode_text}] 共篩選出 {len(df_final)} 檔 S 級真龍")
-                        st.dataframe(df_final)  # 移除漸層上色，素顏完美呈現！
-
+                        # V18.7 修正：移除 matplotlib 漸層上色，素顏完美呈現
+                        st.dataframe(df_final)
                     else:
                         st.warning("⚠️ 在目前的嚴格濾網下，沒有股票符合條件。這代表目前盤勢可能不佳，建議保留現金！")
                         
