@@ -8,9 +8,9 @@ import requests
 # ==========================================
 # 模組一：系統初始化與 UI 框架
 # ==========================================
-st.set_page_config(page_title="HIOS Wave Radar V19.2", layout="wide")
-st.title("🌊 HIOS Wave Radar V19.2 - 架構師防彈版")
-st.markdown("### 終極量化核心：全市場直連 × 模糊尋標 × 絕對防護")
+st.set_page_config(page_title="HIOS Wave Radar V19.3", layout="wide")
+st.title("🌊 HIOS Wave Radar V19.3 - 架構師防彈版")
+st.markdown("### 終極量化核心：全市場直連 × 精準尋標 × 絕對防護")
 
 # ==========================================
 # 模組二：全市場名單獲取 (脫離 CSV 綁架)
@@ -40,7 +40,7 @@ def fetch_tw_universe():
     return df_universe.drop_duplicates(subset=['代號'])
 
 # ==========================================
-# 模組三：智慧資料清洗層 (AI 模糊尋標)
+# 模組三：智慧資料清洗層 (精準 AI 尋標)
 # ==========================================
 def parse_chip_csv(uploaded_file):
     raw_bytes = uploaded_file.read()
@@ -64,14 +64,25 @@ def parse_chip_csv(uploaded_file):
     df = pd.read_csv(io.StringIO(decoded_text), skiprows=skip_rows)
     df.columns = df.columns.str.strip()
     
-    # V19.2 核心升級：AI 模糊關鍵字對齊欄位 (無視橫槓與空格)
+    # V19.3 核心升級：精準尋標 (排除金額、避免重複)
+    rename_dict = {}
     for col in df.columns:
         col_clean = col.replace(' ', '').replace('"', '')
-        if '代號' in col_clean: df.rename(columns={col: '代號'}, inplace=True)
-        elif '名稱' in col_clean: df.rename(columns={col: '名稱'}, inplace=True)
-        elif '投信' in col_clean and '買賣超' in col_clean: df.rename(columns={col: '投信買賣超'}, inplace=True)
-        elif ('外資' in col_clean or '外陸資' in col_clean) and '買賣超' in col_clean: df.rename(columns={col: '外資買賣超'}, inplace=True)
-        elif '周轉率' in col_clean: df.rename(columns={col: '周轉率'}, inplace=True)
+        if '代號' in col_clean and '代號' not in rename_dict.values(): 
+            rename_dict[col] = '代號'
+        elif '名稱' in col_clean and '名稱' not in rename_dict.values(): 
+            rename_dict[col] = '名稱'
+        elif '投信' in col_clean and '買賣超' in col_clean and '金額' not in col_clean and '投信買賣超' not in rename_dict.values(): 
+            rename_dict[col] = '投信買賣超'
+        elif ('外資' in col_clean or '外陸資' in col_clean) and '買賣超' in col_clean and '金額' not in col_clean and '外資買賣超' not in rename_dict.values(): 
+            rename_dict[col] = '外資買賣超'
+        elif '周轉率' in col_clean and '周轉率' not in rename_dict.values(): 
+            rename_dict[col] = '周轉率'
+            
+    df = df.rename(columns=rename_dict)
+    
+    # 殺手鐧：剃除任何重複命名的欄位，確保後續轉換絕對安全
+    df = df.loc[:, ~df.columns.duplicated()]
     
     if '代號' in df.columns:
         df['代號'] = df['代號'].astype(str).str.strip()
@@ -111,14 +122,13 @@ uploaded_files = st.sidebar.file_uploader("📥 上傳籌碼 CSV (可同時框�
 # ==========================================
 df_universe = fetch_tw_universe()
 
-if st.button("🚀 啟動 V19.2 終極掃描"):
+if st.button("🚀 啟動 V19.3 終極掃描"):
     with st.spinner("系統運作中：正在建構全市場名單與融合籌碼數據..."):
         df_chips = pd.DataFrame()
         if uploaded_files:
             chip_dfs = [parse_chip_csv(f) for f in uploaded_files]
             df_chips = pd.concat(chip_dfs, ignore_index=True).drop_duplicates(subset=['代號'], keep='last')
         
-        # V19.2 核心升級：Outer Merge (聯集合併)，確保 CSV 資料絕對不會遺失
         if not df_universe.empty and not df_chips.empty:
             df_master = pd.merge(df_universe, df_chips, on='代號', how='outer')
             df_master['名稱'] = df_master['名稱_y'].combine_first(df_master['名稱_x'])
@@ -151,7 +161,6 @@ if st.button("🚀 啟動 V19.2 終極掃描"):
         for current_step, (idx, row) in enumerate(df_to_scan.iterrows()):
             stock_code = str(row['代號']).strip()
             market_type = row.get('市場', '上市')
-            # 如果市場未知，預設先用 .TW 找，找不到再用 .TWO
             yf_code = f"{stock_code}.TWO" if market_type == '上櫃' else f"{stock_code}.TW"
             
             try:
