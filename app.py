@@ -1,121 +1,142 @@
-import json, os, requests, time
-from datetime import datetime as dt
 import streamlit as st
-import yfinance as yf
 import pandas as pd
-import twstock as tw
-import plotly.graph_objects as go
-import plotly.express as px
+import yfinance as yf
+import json, os
+from datetime import datetime as dt
+import twstock
 
-st.set_page_config(page_title="HIOS V16.2", layout="wide")
-page = st.sidebar.radio("模組", ["雷達", "競技場", "K線"])
+st.set_page_config(page_title="HIOS V17 主控台", layout="wide")
+st.title("🚀 HIOS 量化操盤系統 V17.0 (戰術主控台)")
 
-def get_n(c): return tw.codes[c].name if c in tw.codes else "未知"
+# --- 1. 大盤多空晴雨表 ---
+@st.cache_data(ttl=3600)
+def get_twii():
+    try:
+        df = yf.download("^TWII", period="2mo", progress=False)
+        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+        return float(df['Close'].iloc[-1]), float(df['Close'].rolling(20).mean().iloc[-1])
+    except: return None
 
-if page == "雷達":
-    st.title("🚀 HIOS 波段雷達 (V16.2 全市場雙引擎)")
-    if 'rd' not in st.session_state:
+twii = get_twii()
+if twii:
+    c, m = twii
+    if c > m: st.success(f"🟢 大盤晴雨表：多頭強勢 (指數 {c:.0f} > 月線 {m:.0f}) | 建議資金水位：70%~100%")
+    else: st.warning(f"🟡 大盤晴雨表：震盪防守 (指數 {c:.0f} < 月線 {m:.0f}) | 建議資金水位：30%~50%")
+
+# --- 2. 參數設定與資料匯入 ---
+with st.expander("⚙️ 展開 S 級真龍濾網參數", expanded=True):
+    col1, col2, col3 = st.columns(3)
+    sm = col1.radio("掃描範圍", ("自選", "上市", "上櫃", "全市場"), horizontal=True)
+    ti = col1.text_input("自選代號 (逗號分隔)", "2382,3413,3015,8210") if sm == "自選" else ""
+    csv_file = col1.file_uploader("上傳三大法人買賣超 CSV (強烈建議)", type=['csv'])
+    
+    a_bias = col2.slider("MA20 乖離上限(%)", 1.0, 15.0, 5.0)
+    val_limit = col2.number_input("成交值下限 (億)", 0.0, 100.0, 1.0)
+    
+    t_buy = col3.number_input("投信買超下限 (張)", -10000, 10000, 100)
+    f_buy = col3.number_input("外資買超下限 (張)", -10000, 10000, 0)
+    strict_ma = col3.checkbox("嚴格模式：均線多頭排列 (MA5>MA10>MA20)")
+    
+    run_btn = st.button("🚀 啟動全市場掃描", use_container_width=True)
+
+# --- 3. 核心抓取邏輯 ---
+@st.cache_data
+def get_tickers(m):
+    tm = "上市" if "上市" in m else "上櫃"
+    return [f"{c}{'.TW' if tm=='上市' else '.TWO'}" for c,i in twstock.codes.items() if i.type=='股票' and i.market==tm and len(c)==4], {c:i.name for c,i in twstock.codes.items() if i.type=='股票' and i.market==tm and len(c)==4}
+
+if run_btn:
+    chip_data = {}
+    if csv_file:
         try:
-            with open("c.json",'r') as f:
-                d=json.load(f)
-                st.session_state['rd'], st.session_state['lu'] = d['d'], d['t']
-        except: st.session_state['rd'], st.session_state['lu'] = [], "無"
+            cdf = pd.read_csv(csv_file)
+            c_col = [c for c in cdf.columns if '代號' in c or '代碼' in c or 'Code' in c][0]
+            t_col = [c for c in cdf.columns if '投信' in c][0]
+            f_col = [c for c in cdf.columns if '外資' in c][0]
+            for _, r in cdf.iterrows():
+                chip_data[str(r[c_col]).strip()] = {"投": float(str(r[t_col]).replace(',','')), "外": float(str(r[f_col]).replace(',',''))}
+        except: st.error("CSV 解析失敗，請確認檔案格式。")
 
-    @st.cache_data
-    def get_t(m):
-        tm = "上市" if "上市" in m else "上櫃"
-        return [f"{c}{'.TW' if tm=='上市' else '.TWO'}" for c,i in tw.codes.items() if i.type=='股票' and i.market==tm and len(c)==4], {c:i.name for c,i in tw.codes.items() if i.type=='股票' and i.market==tm and len(c)==4}
-
-    st.sidebar.info(f"💾 更新: {st.session_state['lu']}")
-    sm = st.sidebar.radio("範圍", ("自選","上市","上櫃","全市場"))
-    ti = st.sidebar.text_area("自選代號","2382,3413") if sm=="自選" else ""
-    cs = st.sidebar.radio("籌碼", ("CSV","API"))
-    uc = st.sidebar.file_uploader("CSV",type=["csv"]) if cs=="CSV" else None
-
-    if st.sidebar.button("🚀 抓取"):
-        cd = {}
-        if uc:
-            df = pd.read_csv(uc)
-            cc, fc, ic = df.columns[0], df.columns[df.columns.str.contains('外資')][0], df.columns[df.columns.str.contains('投信')][0]
-            for _,r in df.iterrows(): cd[str(r[cc]).replace('=','').replace('"','').strip()] = {"外":pd.to_numeric(str(r[fc]).replace(',',''),errors='coerce')or 0, "投":pd.to_numeric(str(r[ic]).replace(',',''),errors='coerce')or 0}
-        elif cs == "API":
-            try:
-                for i in requests.get("https://openapi.twse.com.tw/v1/fund/T86_ALL",timeout=5 ).json(): cd[str(i.get('Code','')).strip()] = {"外":float(str(i.get('ForeignInvestorDifference','0')).replace(',',''))/1000, "投":float(str(i.get('InvestmentTrustDifference','0')).replace(',',''))/1000}
-                for i in requests.get("https://www.tpex.org.tw/openapi/v1/t112sb0eb",timeout=5 ).json():
-                    c = str(i.get('SecuritiesCompanyCode','')).strip()
-                    if c not in cd: cd[c] = {"外":0,"投":0}
-                    cd[c]["外"] = float(str(i.get('Difference','0')).replace(',',''))/1000
-                for i in requests.get("https://www.tpex.org.tw/openapi/v1/t112sb0ec",timeout=5 ).json():
-                    c = str(i.get('SecuritiesCompanyCode','')).strip()
-                    if c not in cd: cd[c] = {"外":0,"投":0}
-                    cd[c]["投"] = float(str(i.get('Difference','0')).replace(',',''))/1000
-            except: pass
-
-        tt, nd = [], {}
-        if sm == "自選":
-            for t in [x.strip() for x in ti.split(",")]:
-                pc = t.split('.')[0]
-                if pc in tw.codes:
-                    nd[pc] = tw.codes[pc].name
-                    tt.append(f"{pc}{'.TW' if tw.codes[pc].market=='上市' else '.TWO'}")
-                else: tt.append(f"{pc}.TW")
-        elif sm == "全市場":
-            t1, n1 = get_t("上市")
-            t2, n2 = get_t("上櫃")
-            tt, nd = t1+t2, {**n1, **n2}
-        else: tt, nd = get_t(sm)
-
-        rr, pb, st_txt = [], st.progress(0), st.empty()
-        for i, t in enumerate(tt):
+    tt, nd = [], {}
+    if sm == "自選":
+        for t in [x.strip() for x in ti.split(",")]:
             pc = t.split('.')[0]
-            st_txt.text(f"下載 {t} ... ({i+1}/{len(tt)})")
-            try:
-                df = yf.download(t, period="6mo", progress=False)
-                if len(df) >= 60:
-                    if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
-                    df['M20'], df['M60'], df['V'] = df['Close'].rolling(20).mean(), df['Close'].rolling(60).mean(), df['Volume']/1000
-                    l = df.iloc[-1]
-                    rr.append({"代號":pc, "名稱":nd.get(pc,"未知"), "收盤價":round(float(l['Close']),1), "MA20":float(l['M20']), "MA60":float(l['M60']), "成交量":int(l['V']), "5日均量":float(df['V'].rolling(5).mean().iloc[-1]), "投信":cd.get(pc,{}).get("投",0), "外資":cd.get(pc,{}).get("外",0)})
-            except: pass
-            pb.progress((i+1)/len(tt))
-        
-        st.session_state['rd'], st.session_state['lu'] = rr, dt.now().strftime("%Y-%m-%d %H:%M:%S")
+            if pc in twstock.codes:
+                nd[pc] = twstock.codes[pc].name
+                tt.append(f"{pc}{'.TW' if twstock.codes[pc].market=='上市' else '.TWO'}")
+            else: tt.append(f"{pc}.TW")
+    elif sm == "全市場":
+        t1, n1 = get_tickers("上市")
+        t2, n2 = get_tickers("上櫃")
+        tt, nd = t1+t2, {**n1, **n2}
+    else: tt, nd = get_tickers(sm)
+
+    rr, pb, st_txt = [], st.progress(0), st.empty()
+    
+    for i, t in enumerate(tt):
+        pc = t.split('.')[0]
+        st_txt.text(f"掃描中 {t} ... ({i+1}/{len(tt)})")
         try:
-            with open("c.json",'w') as f: json.dump({'t':st.session_state['lu'],'d':rr}, f)
+            df = yf.download(t, period="3mo", progress=False)
+            if len(df) >= 60:
+                if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+                c = float(df['Close'].iloc[-1])
+                v = float(df['Volume'].iloc[-1]) / 1000
+                rr.append({
+                    "代號": pc, "名稱": nd.get(pc,"未知"), "收盤價": round(c,2),
+                    "MA5": float(df['Close'].rolling(5).mean().iloc[-1]),
+                    "MA10": float(df['Close'].rolling(10).mean().iloc[-1]),
+                    "MA20": float(df['Close'].rolling(20).mean().iloc[-1]),
+                    "成交值(億)": round((c * v * 1000)/100000000, 2),
+                    "投信": chip_data.get(pc, {}).get("投", 0),
+                    "外資": chip_data.get(pc, {}).get("外", 0)
+                })
         except: pass
-        st_txt.success(f"✅ 完成！存入 {len(rr)} 檔。")
+        pb.progress((i+1)/len(tt))
+    
+    st.session_state['raw_data'] = rr
+    st_txt.success(f"✅ 掃描完成！共取得 {len(rr)} 檔資料。")
+    
+    # 📦 隱藏動作：儲存時光膠囊
+    if not os.path.exists("snapshots"): os.makedirs("snapshots")
+    with open(f"snapshots/{dt.now().strftime('%Y-%m-%d_%H%M')}_snapshot.json", "w", encoding="utf-8") as f: 
+        json.dump(rr, f, ensure_ascii=False)
 
-    if st.session_state['rd']:
-        df = pd.DataFrame(st.session_state['rd'])
-        with st.expander("⚙️ 參數設定", expanded=True):
-            c1, c2, c3, c4 = st.columns(4)
-            a20 = c1.slider("A策略 MA20 乖離(%)", 1.0, 15.0, 5.0)
-            b60 = c2.slider("B策略 MA60 乖離(%)", 1.0, 20.0, 10.0)
-            bv = c3.slider("B策略 成交量(張)", 500, 10000, 3000)
-            mi = c4.number_input("投信買超大於", -10000, 10000, 100)
+# --- 4. 戰情儀表板與 Manus 匯出 ---
+if st.session_state.get('raw_data'):
+    df = pd.DataFrame(st.session_state['raw_data'])
+    df['乖離(%)'] = round((df['收盤價'] - df['MA20']) / df['MA20'] * 100, 2)
+    
+    cond = (df['收盤價'] > df['MA20']) & (df['乖離(%)'] <= a_bias) & (df['成交值(億)'] >= val_limit) & (df['投信'] >= t_buy) & (df['外資'] >= f_buy)
+    if strict_ma: cond = cond & (df['MA5'] > df['MA10']) & (df['MA10'] > df['MA20'])
+    
+    dff = df[cond].copy()
+    
+    if not dff.empty:
+        def calc_score(r):
+            s = 50
+            if r['投信'] > 0: s += min(20, int(r['投信']/100))
+            if r['外資'] > 0: s += min(10, int(r['外資']/200))
+            if r['MA5'] > r['MA10'] > r['MA20']: s += 10
+            if r['乖離(%)'] < 3: s += 10
+            return min(100, s)
+        
+        dff['評分'] = dff.apply(calc_score, axis=1)
+                dff['星級'] = dff['評分'].apply(lambda x: '🌟' * int(x/20))
+        dp = dff[['代號', '名稱', '收盤價', '評分', '星級', '乖離(%)', '成交值(億)', '投信', '外資']].sort_values('評分', ascending=False)
+        
+        st.markdown("### 📊 S 級真龍戰情室")
+        st.dataframe(dp, use_container_width=True, hide_index=True)
+        
+        # --- 5. Manus 專屬一鍵匯出 ---
+        st.markdown("### 🤖 Manus 聯網分析指令")
+        top_n = dp.head(5)
+        prompt = f"Manus 軍師，這是 HIOS 雷達今日 ({dt.now().strftime('%m/%d')}) 盤後過濾出的 Top {len(top_n)} 真龍名單，請協助我進行實戰決策：\n\n"
+        for _, r in top_n.iterrows():
+            prompt += f"- **{r['名稱']} ({r['代號']})**：收盤 {r['收盤價']}，評分 {r['評分']} {r['星級']}，投信買超 {r['投信']} 張，月線乖離 {r['乖離(%)']}%\n"
+        prompt += "\n**請幫我聯網查詢：** 這幾檔最新的法說會展望、營收動能與近期法人籌碼動向？並建議明天 50 萬資金該優先佈局哪一檔？"
+        
+        st.code(prompt, language="markdown")
+    else:
+        st.warning("⚠️ 目前參數下沒有符合條件的股票，請嘗試放寬濾網！")
 
-        df['A'] = (df['收盤價']>df['MA20']) & (((df['收盤價']-df['MA20'])/df['MA20']*100)<a20)
-        df['B'] = (df['成交量']>df['5日均量']) & (df['成交量']>bv) & (((df['收盤價']-df['MA60'])/df['MA60']*100)<b60)
-        dff = df[(df['A']|df['B']) & (df['投信']>=mi)].copy()
-
-        if not dff.empty:
-            dff['策略'] = dff.apply(lambda x: " + ".join([s for s,c in zip(["🟢 A","🔥 B"],[x['A'],x['B']]) if c]), axis=1)
-            dff['乖離(%)'] = round((dff['收盤價']-dff['MA20'])/dff['MA20']*100, 1)
-            dff['買區'] = dff['MA20'].apply(lambda x: f"{x:.1f}~{x*1.02:.1f}")
-            dff['停損'] = round(dff['MA20']*0.97, 1)
-            dp = dff[['代號','名稱','收盤價','策略','投信','外資','乖離(%)','成交量','買區','停損']].sort_values("投信", ascending=False)
-            
-            m1, m2, m3 = st.columns(3)
-            m1.metric("🎯 總數", f"{len(dp)} 檔")
-            m2.metric("🔥 投信冠軍", f"{dp.iloc[0]['名稱']}", f"{int(dp.iloc[0]['投信'])} 張")
-            m3.metric("📈 最高乖離", f"{dp['乖離(%)'].max()}%")
-            
-            st.dataframe(dp, use_container_width=True, hide_index=True, column_config={"投信": st.column_config.ProgressColumn("投信", format="%d", min_value=0, max_value=int(dp['投信'].max()) if dp['投信'].max()>0 else 1000)})
-            
-            sn = st.text_input("快照命名", f"{dt.now().strftime('%Y%m%d_%H%M%S')}_名單")
-            if st.button("💾 儲存快照"):
-                sd = {}
-                try:
-                    with open("s.json","r") as f: sd=json.load(f)
-                except: pass
-                sd[sn] = {"d": dt.now().strftime("%Y-%m-%d %H:%M:%S"), "p": {"A乖離":a20,"B乖離":b60,"B量":bv,"投
