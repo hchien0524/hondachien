@@ -3,12 +3,13 @@ import pandas as pd
 import yfinance as yf
 import numpy as np
 import io
+import re
 
 # ==========================================
 # 1. 系統初始化與 UI 設定
 # ==========================================
-st.set_page_config(page_title="HIOS Wave Radar V18.3", layout="wide")
-st.title("🌊 HIOS Wave Radar V18.3 - 機構級量化雷達")
+st.set_page_config(page_title="HIOS Wave Radar V18.4", layout="wide")
+st.title("🌊 HIOS Wave Radar V18.4 - 機構級量化雷達")
 st.markdown("### 雙核心引擎：低乖離防守 × 投信動能攻擊 (漏斗篩選架構)")
 
 # ==========================================
@@ -91,7 +92,6 @@ def fetch_and_calculate(df_chips):
 def v18_funnel_filter_and_score(df, intraday_mode):
     filtered_df = df.copy()
     
-    # --- 第一階段：絕對鐵門 ---
     filtered_df = filtered_df[(filtered_df['投信買賣超'] >= min_trust_buy) & (filtered_df['外資買賣超'] > -1000)]
     filtered_df = filtered_df[filtered_df['收盤價'] > filtered_df['MA60']]
     filtered_df = filtered_df[filtered_df['MA20_乖離率'] <= max_bias]
@@ -101,7 +101,6 @@ def v18_funnel_filter_and_score(df, intraday_mode):
             filtered_df = filtered_df[filtered_df['周轉率'] <= max_turnover]
         filtered_df = filtered_df[filtered_df['成交量'] >= (filtered_df['5日均量'] * vol_expansion)]
     
-    # --- 第二階段：優選評分 ---
     if filtered_df.empty:
         return filtered_df
         
@@ -131,27 +130,23 @@ def v18_funnel_filter_and_score(df, intraday_mode):
     return filtered_df[display_cols]
 
 # ==========================================
-# 4. 主程式執行區 (終極防彈讀取法)
+# 4. 主程式執行區 (加入純血普通股濾網)
 # ==========================================
 if uploaded_file is not None:
     try:
-        # 1. 將檔案讀取為原始位元組
         raw_bytes = uploaded_file.read()
         decoded_text = None
         
-        # 2. 嚴格測試編碼 (不允許亂碼產生)
         for enc in ['utf-8-sig', 'utf-8', 'cp950', 'big5']:
             try:
                 decoded_text = raw_bytes.decode(enc)
-                break # 成功解碼就跳出
+                break
             except UnicodeDecodeError:
                 continue
                 
-        # 如果真的都失敗，才用強制略過
         if decoded_text is None:
             decoded_text = raw_bytes.decode('cp950', errors='ignore')
             
-        # 3. 尋找真正的標題行
         lines = decoded_text.splitlines()
         skip_rows = 0
         for i, line in enumerate(lines):
@@ -160,10 +155,8 @@ if uploaded_file is not None:
                 skip_rows = i
                 break
                 
-        # 4. 使用 io.StringIO 將純文字轉回 CSV 給 Pandas 讀取
         df_raw = pd.read_csv(io.StringIO(decoded_text), skiprows=skip_rows)
         
-        # 5. 欄位自動校正與清洗
         df_raw.columns = df_raw.columns.str.strip()
         col_mapping = {
             '證券代號': '代號', '股票代號': '代號',
@@ -172,7 +165,12 @@ if uploaded_file is not None:
         }
         df_raw = df_raw.rename(columns=col_mapping)
         
-        # 6. 數字欄位防呆 (清除千分位逗號)
+        # --- V18.4 核心：純血普通股濾網 (只保留 4 碼數字) ---
+        if '代號' in df_raw.columns:
+            df_raw['代號'] = df_raw['代號'].astype(str).str.strip()
+            # 剔除權證、ETF，只保留剛好 4 個數字的代號
+            df_raw = df_raw[df_raw['代號'].str.match(r'^\d{4}$')]
+        
         for col in ['投信買賣超', '外資買賣超', '周轉率']:
             if col in df_raw.columns:
                 if df_raw[col].dtype == object:
@@ -181,9 +179,9 @@ if uploaded_file is not None:
         if '代號' not in df_raw.columns:
             st.error(f"⚠️ 找不到「代號」欄位！目前 CSV 擁有的欄位為：{list(df_raw.columns)}")
         else:
-            st.success(f"✅ 成功匯入籌碼資料，共 {len(df_raw)} 筆標的。")
+            st.success(f"✅ 成功匯入籌碼資料，過濾權證與雜訊後，共保留 {len(df_raw)} 檔純血普通股。")
             
-            if st.button("🚀 啟動 V18.3 漏斗掃描"):
+            if st.button("🚀 啟動 V18.4 漏斗掃描"):
                 with st.spinner("正在聯網獲取即時報價與計算指標..."):
                     df_analyzed = fetch_and_calculate(df_raw)
                     df_final = v18_funnel_filter_and_score(df_analyzed, is_intraday)
