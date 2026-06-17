@@ -208,7 +208,8 @@ if uploaded_file is not None:
                         st.balloons()
                         mode_text = "盤中狙擊模式 (已放寬量能濾網)" if is_intraday else "盤後嚴格模式 (全鐵門啟動)"
                         st.markdown(f"### 🎯 掃描完成！[{mode_text}] 共篩選出 {len(df_final)} 檔 S 級真龍")
-                        st.dataframe(df_final.style.background_gradient(subset=['綜合評分'], cmap='YlOrRd'))
+                        st.dataframe(df_final)  # 移除漸層上色，素顏完美呈現！
+
                     else:
                         st.warning("⚠️ 在目前的嚴格濾網下，沒有股票符合條件。這代表目前盤勢可能不佳，建議保留現金！")
                         
