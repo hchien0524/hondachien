@@ -8,12 +8,12 @@ import requests
 # ==========================================
 # 模組一：系統初始化與 UI 框架
 # ==========================================
-st.set_page_config(page_title="HIOS Wave Radar V19.4", layout="wide")
-st.title("🌊 HIOS Wave Radar V19.4 - X光透視版")
-st.markdown("### 終極量化核心：全市場直連 × 雙層表頭破解 × 絕對防護")
+st.set_page_config(page_title="HIOS Wave Radar V19.5", layout="wide")
+st.title("🌊 HIOS Wave Radar V19.5 - 暴力提取版")
+st.markdown("### 終極量化核心：全市場直連 × 暴力數據提取 × 絕對防護")
 
 # ==========================================
-# 模組二：全市場名單獲取 (脫離 CSV 綁架)
+# 模組二：全市場名單獲取
 # ==========================================
 @st.cache_data(ttl=86400)
 def fetch_tw_universe():
@@ -40,7 +40,7 @@ def fetch_tw_universe():
     return df_universe.drop_duplicates(subset=['代號'])
 
 # ==========================================
-# 模組三：智慧資料清洗層 (破解雙層表頭)
+# 模組三：暴力數據提取層 (無視排版，直接抽數據)
 # ==========================================
 def parse_chip_csv(uploaded_file):
     raw_bytes = uploaded_file.read()
@@ -63,49 +63,44 @@ def parse_chip_csv(uploaded_file):
             
     df = pd.read_csv(io.StringIO(decoded_text), skiprows=skip_rows)
     
-    # V19.4 核心升級：破解上櫃「雙層表頭」陷阱
-    # 如果第一筆資料裡面含有「買賣超」，代表它是第二層表頭，進行上下融合
-    if not df.empty and any(isinstance(val, str) and '買賣超' in val.replace(' ', '') for val in df.iloc[0].values):
-        new_cols = []
-        current_main = ""
-        for col, sub in zip(df.columns, df.iloc[0]):
-            if not str(col).startswith('Unnamed'):
-                current_main = str(col).replace('\n', '').strip()
-            sub_str = str(sub).replace('\n', '').strip() if pd.notna(sub) else ""
-            new_cols.append(f"{current_main}_{sub_str}")
-        df.columns = new_cols
-        df = df.drop(0).reset_index(drop=True)
-        
-    df.columns = df.columns.str.strip()
-    
-    rename_dict = {}
-    for col in df.columns:
-        col_clean = col.replace(' ', '').replace('"', '')
-        if '代號' in col_clean and '代號' not in rename_dict.values(): 
-            rename_dict[col] = '代號'
-        elif '名稱' in col_clean and '名稱' not in rename_dict.values(): 
-            rename_dict[col] = '名稱'
-        elif '投信' in col_clean and '買賣超' in col_clean and '金額' not in col_clean and '投信買賣超' not in rename_dict.values(): 
-            rename_dict[col] = '投信買賣超'
-        elif ('外資' in col_clean or '外陸資' in col_clean) and '買賣超' in col_clean and '金額' not in col_clean and '外資買賣超' not in rename_dict.values(): 
-            rename_dict[col] = '外資買賣超'
-        elif '周轉率' in col_clean and '周轉率' not in rename_dict.values(): 
-            rename_dict[col] = '周轉率'
+    # 暴力尋標：找出目標欄位的真實名稱
+    trust_col, foreign_col, code_col, name_col, turn_col = None, None, None, None, None
+    for c in df.columns:
+        c_str = str(c).replace(' ', '').replace('"', '').replace('\n', '')
+        if '代號' in c_str and not code_col: code_col = c
+        elif '名稱' in c_str and not name_col: name_col = c
+        elif '投信' in c_str and '買賣超' in c_str and '金額' not in c_str and not trust_col: trust_col = c
+        elif ('外資' in c_str or '外陸資' in c_str) and '買賣超' in c_str and '金額' not in c_str and not foreign_col: foreign_col = c
+        elif '周轉率' in c_str and not turn_col: turn_col = c
             
-    df = df.rename(columns=rename_dict)
-    df = df.loc[:, ~df.columns.duplicated()]
+    # 建立乾淨的標準資料表
+    df_clean = pd.DataFrame()
     
-    if '代號' in df.columns:
-        df['代號'] = df['代號'].astype(str).str.strip()
-        df = df[df['代號'].str.match(r'^\d{4}$')]
+    if code_col: df_clean['代號'] = df[code_col].astype(str).str.strip()
+    else: df_clean['代號'] = ""
+    
+    if name_col: df_clean['名稱'] = df[name_col].astype(str).str.strip()
+    else: df_clean['名稱'] = ""
+    
+    # 過濾純血普通股
+    df_clean = df_clean[df_clean['代號'].str.match(r'^\d{4}$')]
+    
+    # 數字清洗與單位轉換 (股 -> 張)
+    def extract_and_clean(target_col):
+        if target_col and target_col in df.columns:
+            # 移除逗號並轉為數字
+            s = pd.to_numeric(df[target_col].astype(str).str.replace(',', '').str.strip(), errors='coerce').fillna(0)
+            # 只要欄位名稱有「股」，或者數字大於 20000，就強制除以 1000 變為「張」
+            if '股' in str(target_col) or s.abs().max() > 20000:
+                s = np.round(s / 1000, 0)
+            return s.loc[df_clean.index] # 對齊 index
+        return pd.Series(0, index=df_clean.index)
         
-    for col in ['投信買賣超', '外資買賣超', '周轉率']:
-        if col not in df.columns: df[col] = 0
-        df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', '').str.strip(), errors='coerce').fillna(0)
-        if df[col].abs().max() > 20000:
-            df[col] = np.round(df[col] / 1000, 0)
-            
-    return df
+    df_clean['投信買賣超'] = extract_and_clean(trust_col)
+    df_clean['外資買賣超'] = extract_and_clean(foreign_col)
+    df_clean['周轉率'] = extract_and_clean(turn_col)
+    
+    return df_clean
 
 # ==========================================
 # 模組四：側邊欄戰略控制台
@@ -122,129 +117,4 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("🛡️ 絕對濾網 (Hard Filters)")
 min_trust_buy = st.sidebar.number_input("投信買超下限 (張)", value=100, step=50)
 max_bias = st.sidebar.number_input("MA20 乖離率上限 (%)", value=5.0, step=0.5)
-max_turnover = st.sidebar.number_input("周轉率上限 (%)", value=10.0, step=1.0)
-vol_expansion = st.sidebar.number_input("溫和放量倍數 (今日/5日均量)", value=1.2, step=0.1)
-
-st.sidebar.markdown("---")
-uploaded_files = st.sidebar.file_uploader("📥 上傳籌碼 CSV (可同時框選上市+上櫃多個檔案)", type="csv", accept_multiple_files=True)
-
-# ==========================================
-# 模組五：雙軌時間軸引擎與主程式
-# ==========================================
-df_universe = fetch_tw_universe()
-
-if st.button("🚀 啟動 V19.4 終極掃描"):
-    with st.spinner("系統運作中：正在建構全市場名單與融合籌碼數據..."):
-        df_chips = pd.DataFrame()
-        if uploaded_files:
-            chip_dfs = [parse_chip_csv(f) for f in uploaded_files]
-            df_chips = pd.concat(chip_dfs, ignore_index=True).drop_duplicates(subset=['代號'], keep='last')
-        
-        if not df_universe.empty and not df_chips.empty:
-            df_master = pd.merge(df_universe, df_chips, on='代號', how='outer')
-            df_master['名稱'] = df_master['名稱_y'].combine_first(df_master['名稱_x'])
-            df_master['市場'] = df_master['市場'].fillna('未知')
-        elif not df_chips.empty:
-            df_master = df_chips.copy()
-            df_master['市場'] = '未知'
-        else:
-            df_master = df_universe.copy()
-            
-        for col in ['投信買賣超', '外資買賣超', '周轉率']:
-            if col not in df_master.columns: df_master[col] = 0
-            df_master[col] = df_master[col].fillna(0)
-            
-        if market_choice == "僅上市": df_master = df_master[df_master['市場'].isin(['上市', '未知'])]
-        elif market_choice == "僅上櫃": df_master = df_master[df_master['市場'].isin(['上櫃', '未知'])]
-        
-        df_to_scan = df_master[(df_master['投信買賣超'] >= min_trust_buy) & (df_master['外資買賣超'] > -1000)]
-        
-        if df_to_scan.empty:
-            st.warning(f"⚠️ 在「投信買超 >= {min_trust_buy} 張」且「外資未大賣」的條件下，沒有股票通過初篩。")
-            st.stop()
-
-    results = []
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    total_stocks = len(df_to_scan)
-    
-    with st.spinner(f"智慧漏斗啟動：已將目標縮減至 {total_stocks} 檔，正在進行技術面深度掃描..."):
-        for current_step, (idx, row) in enumerate(df_to_scan.iterrows()):
-            stock_code = str(row['代號']).strip()
-            market_type = row.get('市場', '上市')
-            yf_code = f"{stock_code}.TWO" if market_type == '上櫃' else f"{stock_code}.TW"
-            
-            try:
-                hist = yf.Ticker(yf_code).history(period="3mo")
-                if len(hist) < 60 and market_type == '未知':
-                    yf_code = f"{stock_code}.TWO"
-                    hist = yf.Ticker(yf_code).history(period="3mo")
-                    
-                if len(hist) >= 60:
-                    hist['MA20'] = hist['Close'].rolling(window=20).mean()
-                    hist['MA60'] = hist['Close'].rolling(window=60).mean()
-                    hist['MA5_Vol'] = hist['Volume'].rolling(window=5).mean()
-                    
-                    latest = hist.iloc[-1]
-                    close_price = float(latest['Close'])
-                    ma20 = float(latest['MA20'])
-                    ma60 = float(latest['MA60'])
-                    volume = float(latest['Volume']) / 1000
-                    ma5_vol = float(latest['MA5_Vol']) / 1000
-                    
-                    bias_20 = ((close_price - ma20) / ma20) * 100
-                    
-                    if close_price > ma60 and bias_20 <= max_bias:
-                        pass_volume = True
-                        if not is_intraday:
-                            if volume < (ma5_vol * vol_expansion): pass_volume = False
-                            if row['周轉率'] > 0 and row['周轉率'] > max_turnover: pass_volume = False
-                            
-                        if pass_volume:
-                            results.append({
-                                '代號': stock_code, '名稱': row['名稱'], '市場': market_type,
-                                '收盤價': round(close_price, 2), 'MA20_乖離率': round(bias_20, 2),
-                                '投信買賣超': row['投信買賣超'], '外資買賣超': row['外資買賣超'],
-                                '成交量': round(volume, 0), '5日均量': round(ma5_vol, 0)
-                            })
-            except Exception: pass
-            
-            progress_bar.progress((current_step + 1) / total_stocks)
-            status_text.text(f"正在狙擊: {stock_code} ({current_step + 1}/{total_stocks})")
-            
-    progress_bar.empty()
-    status_text.empty()
-    
-    df_final = pd.DataFrame(results)
-    if not df_final.empty:
-        capped_trust = df_final['投信買賣超'].clip(upper=2000)
-        t_min, t_max = capped_trust.min(), capped_trust.max()
-        df_final['投信分數'] = (capped_trust - t_min) / (t_max - t_min) * 60 if t_max > t_min else 60
-            
-        b_min, b_max = df_final['MA20_乖離率'].min(), df_final['MA20_乖離率'].max()
-        df_final['乖離分數'] = (b_max - df_final['MA20_乖離率']) / (b_max - b_min) * 40 if b_max > b_min else 40
-            
-        df_final['綜合評分'] = np.round(df_final['投信分數'] + df_final['乖離分數'], 0)
-        df_final = df_final.sort_values(by='綜合評分', ascending=False).reset_index(drop=True)
-        
-        def get_stars(score):
-            if score >= 90: return '🌟🌟🌟🌟🌟'
-            elif score >= 80: return '🌟🌟🌟🌟'
-            elif score >= 70: return '🌟🌟🌟'
-            else: return '🌟🌟'
-            
-        df_final['推薦星等'] = df_final['綜合評分'].apply(get_stars)
-        display_cols = ['代號', '名稱', '市場', '收盤價', '綜合評分', '推薦星等', 'MA20_乖離率', '投信買賣超', '外資買賣超', '成交量', '5日均量']
-        
-        st.balloons()
-        mode_text = "盤中狙擊模式" if is_intraday else "盤後嚴格模式"
-        st.markdown(f"### 🎯 掃描完成！[{mode_text}] 共篩選出 {len(df_final)} 檔 S 級真龍")
-        st.dataframe(df_final[display_cols])
-        
-        st.markdown("---")
-        st.markdown("### 🤖 人機協同：一鍵呼叫 Manus 深度分析")
-        prompt = f"我是指揮官。請幫我深度分析以下 {len(df_final)} 檔股票，著重基本面與 100 萬資金配置：\n\n"
-        prompt += df_final[['代號', '名稱', '市場', '收盤價', '投信買賣超', '外資買賣超']].to_string(index=False)
-        st.code(prompt, language="text")
-    else:
-        st.warning("⚠️ 未掃描到符合條件的標的，建議保留現金！")
+max_turnover = st.sidebar.number_input("周轉率上限 (%)", value=10.
