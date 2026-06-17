@@ -122,7 +122,7 @@ if st.session_state.get('raw_data'):
             return min(100, s)
         
         dff['評分'] = dff.apply(calc_score, axis=1)
-                dff['星級'] = dff['評分'].apply(lambda x: '🌟' * int(x/20))
+        dff['星級'] = dff['評分'].apply(lambda x: '🌟' * int(x/20))
         dp = dff[['代號', '名稱', '收盤價', '評分', '星級', '乖離(%)', '成交值(億)', '投信', '外資']].sort_values('評分', ascending=False)
         
         st.markdown("### 📊 S 級真龍戰情室")
@@ -139,4 +139,3 @@ if st.session_state.get('raw_data'):
         st.code(prompt, language="markdown")
     else:
         st.warning("⚠️ 目前參數下沒有符合條件的股票，請嘗試放寬濾網！")
-
