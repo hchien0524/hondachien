@@ -47,7 +47,7 @@ def get_tickers(m):
 
 if run_btn:
     chip_data = {}
-        if csv_file:
+    if csv_file:
         try:
             # 自動破解 Big5 編碼與跳過多餘表頭
             try:
