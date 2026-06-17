@@ -157,13 +157,44 @@ def v18_funnel_filter_and_score(df):
 # ==========================================
 if uploaded_file is not None:
     try:
-        # 加入自動編碼切換機制
-        try:
-            df_raw = pd.read_csv(uploaded_file, encoding='utf-8')
-        except UnicodeDecodeError:
-            uploaded_file.seek(0) # 將檔案指標移回開頭
-            df_raw = pd.read_csv(uploaded_file, encoding='big5')
+        # 終極防呆讀取法：嘗試多種台灣常見編碼，並強制略過罕見字亂碼
+        encodings_to_try = ['utf-8', 'cp950', 'big5', 'utf-8-sig']
+        df_raw = None
+        
+        for enc in encodings_to_try:
+            try:
+                uploaded_file.seek(0) # 將檔案指標移回開頭
+                df_raw = pd.read_csv(uploaded_file, encoding=enc, encoding_errors='ignore')
+                break # 只要有一種編碼成功讀取，就跳出迴圈
+            except Exception:
+                continue
+                
+        if df_raw is not None and not df_raw.empty:
+            st.success(f"✅ 成功匯入籌碼資料，共 {len(df_raw)} 筆標的。")
             
+            if st.button("🚀 啟動 V18 漏斗掃描"):
+                with st.spinner("正在聯網獲取即時報價與計算指標..."):
+                    # 1. 獲取資料
+                    df_analyzed = fetch_and_calculate(df_raw)
+                    
+                    # 2. 漏斗篩選與評分
+                    df_final = v18_funnel_filter_and_score(df_analyzed)
+                    
+                    # 3. 顯示結果
+                    if not df_final.empty:
+                        st.balloons()
+                        st.markdown(f"### 🎯 掃描完成！共篩選出 {len(df_final)} 檔 S 級真龍")
+                        st.dataframe(df_final.style.background_gradient(subset=['綜合評分'], cmap='YlOrRd'))
+                    else:
+                        st.warning("⚠️ 在目前的嚴格濾網下，沒有股票符合條件。這代表目前盤勢可能不佳，建議保留現金！")
+        else:
+            st.error("⚠️ 無法解析檔案編碼，請確認 CSV 格式是否正確。")
+            
+    except Exception as e:
+        st.error(f"檔案讀取發生未預期錯誤: {e}")
+else:
+    st.info("請先從左側上傳今日最新的「三大法人.csv」檔案。")
+           
         st.success(f"✅ 成功匯入籌碼資料，共 {len(df_raw)} 筆標的。")
 
         
