@@ -8,9 +8,9 @@ import requests
 # ==========================================
 # 模組一：系統初始化與 UI 框架
 # ==========================================
-st.set_page_config(page_title="HIOS Wave Radar V19", layout="wide")
-st.title("🌊 HIOS Wave Radar V19 - 架構師完全體")
-st.markdown("### 終極量化核心：全市場直連 × 智慧漏斗 × 動態時間軸")
+st.set_page_config(page_title="HIOS Wave Radar V19.2", layout="wide")
+st.title("🌊 HIOS Wave Radar V19.2 - 架構師防彈版")
+st.markdown("### 終極量化核心：全市場直連 × 模糊尋標 × 絕對防護")
 
 # ==========================================
 # 模組二：全市場名單獲取 (脫離 CSV 綁架)
@@ -40,7 +40,7 @@ def fetch_tw_universe():
     return df_universe.drop_duplicates(subset=['代號'])
 
 # ==========================================
-# 模組三：智慧資料清洗層
+# 模組三：智慧資料清洗層 (AI 模糊尋標)
 # ==========================================
 def parse_chip_csv(uploaded_file):
     raw_bytes = uploaded_file.read()
@@ -64,14 +64,14 @@ def parse_chip_csv(uploaded_file):
     df = pd.read_csv(io.StringIO(decoded_text), skiprows=skip_rows)
     df.columns = df.columns.str.strip()
     
-    col_mapping = {
-        '證券代號': '代號', '股票代號': '代號',
-        '證券名稱': '名稱', '股票名稱': '名稱',
-        '投信買賣超股數': '投信買賣超', 
-        '外資買賣超股數': '外資買賣超',
-        '外陸資買賣超股數(不含外資自營商)': '外資買賣超'
-    }
-    df = df.rename(columns=col_mapping)
+    # V19.2 核心升級：AI 模糊關鍵字對齊欄位 (無視橫槓與空格)
+    for col in df.columns:
+        col_clean = col.replace(' ', '').replace('"', '')
+        if '代號' in col_clean: df.rename(columns={col: '代號'}, inplace=True)
+        elif '名稱' in col_clean: df.rename(columns={col: '名稱'}, inplace=True)
+        elif '投信' in col_clean and '買賣超' in col_clean: df.rename(columns={col: '投信買賣超'}, inplace=True)
+        elif ('外資' in col_clean or '外陸資' in col_clean) and '買賣超' in col_clean: df.rename(columns={col: '外資買賣超'}, inplace=True)
+        elif '周轉率' in col_clean: df.rename(columns={col: '周轉率'}, inplace=True)
     
     if '代號' in df.columns:
         df['代號'] = df['代號'].astype(str).str.strip()
@@ -111,29 +111,30 @@ uploaded_files = st.sidebar.file_uploader("📥 上傳籌碼 CSV (可同時框�
 # ==========================================
 df_universe = fetch_tw_universe()
 
-if st.button("🚀 啟動 V19 終極掃描"):
+if st.button("🚀 啟動 V19.2 終極掃描"):
     with st.spinner("系統運作中：正在建構全市場名單與融合籌碼數據..."):
         df_chips = pd.DataFrame()
         if uploaded_files:
             chip_dfs = [parse_chip_csv(f) for f in uploaded_files]
             df_chips = pd.concat(chip_dfs, ignore_index=True).drop_duplicates(subset=['代號'], keep='last')
         
-        if not df_universe.empty:
-            if not df_chips.empty:
-                df_master = pd.merge(df_universe, df_chips, on='代號', how='left')
-                df_master['名稱'] = df_master['名稱_y'].combine_first(df_master['名稱_x'])
-            else:
-                df_master = df_universe.copy()
-        else:
+        # V19.2 核心升級：Outer Merge (聯集合併)，確保 CSV 資料絕對不會遺失
+        if not df_universe.empty and not df_chips.empty:
+            df_master = pd.merge(df_universe, df_chips, on='代號', how='outer')
+            df_master['名稱'] = df_master['名稱_y'].combine_first(df_master['名稱_x'])
+            df_master['市場'] = df_master['市場'].fillna('未知')
+        elif not df_chips.empty:
             df_master = df_chips.copy()
             df_master['市場'] = '未知'
+        else:
+            df_master = df_universe.copy()
             
         for col in ['投信買賣超', '外資買賣超', '周轉率']:
             if col not in df_master.columns: df_master[col] = 0
             df_master[col] = df_master[col].fillna(0)
             
-        if market_choice == "僅上市": df_master = df_master[df_master['市場'] == '上市']
-        elif market_choice == "僅上櫃": df_master = df_master[df_master['市場'] == '上櫃']
+        if market_choice == "僅上市": df_master = df_master[df_master['市場'].isin(['上市', '未知'])]
+        elif market_choice == "僅上櫃": df_master = df_master[df_master['市場'].isin(['上櫃', '未知'])]
         
         df_to_scan = df_master[(df_master['投信買賣超'] >= min_trust_buy) & (df_master['外資買賣超'] > -1000)]
         
@@ -150,10 +151,15 @@ if st.button("🚀 啟動 V19 終極掃描"):
         for current_step, (idx, row) in enumerate(df_to_scan.iterrows()):
             stock_code = str(row['代號']).strip()
             market_type = row.get('市場', '上市')
+            # 如果市場未知，預設先用 .TW 找，找不到再用 .TWO
             yf_code = f"{stock_code}.TWO" if market_type == '上櫃' else f"{stock_code}.TW"
             
             try:
                 hist = yf.Ticker(yf_code).history(period="3mo")
+                if len(hist) < 60 and market_type == '未知':
+                    yf_code = f"{stock_code}.TWO"
+                    hist = yf.Ticker(yf_code).history(period="3mo")
+                    
                 if len(hist) >= 60:
                     hist['MA20'] = hist['Close'].rolling(window=20).mean()
                     hist['MA60'] = hist['Close'].rolling(window=60).mean()
