@@ -8,9 +8,9 @@ import re
 # ==========================================
 # 1. 系統初始化與 UI 設定
 # ==========================================
-st.set_page_config(page_title="HIOS Wave Radar V18.5", layout="wide")
-st.title("🌊 HIOS Wave Radar V18.5 - 機構級量化雷達")
-st.markdown("### 雙核心引擎：低乖離防守 × 投信動能攻擊 (漏斗篩選架構)")
+st.set_page_config(page_title="HIOS Wave Radar V18.6", layout="wide")
+st.title("🌊 HIOS Wave Radar V18.6 - 機構級量化雷達 (全市場版)")
+st.markdown("### 雙核心引擎：低乖離防守 × 投信動能攻擊 (支援上市/上櫃)")
 
 # ==========================================
 # 2. 側邊欄：參數設定與資料匯入
@@ -44,46 +44,50 @@ def fetch_and_calculate(df_chips):
     status_text = st.empty()
     total_stocks = len(df_chips)
     
-    # V18.5 修正：使用 enumerate 確保進度條絕對不會超過 100%
     for current_step, (idx, row) in enumerate(df_chips.iterrows()):
         stock_code = str(row['代號']).strip()
-        yf_code = f"{stock_code}.TW" 
         
         try:
+            # V18.6 雙引擎尋標：先找上市 (.TW)，找不到就找上櫃 (.TWO)
+            yf_code = f"{stock_code}.TW" 
             hist = yf.Ticker(yf_code).history(period="3mo")
+            
             if len(hist) < 60:
-                continue
+                yf_code = f"{stock_code}.TWO"
+                hist = yf.Ticker(yf_code).history(period="3mo")
+                
+            if len(hist) < 60:
+                continue # 真的找不到或資料不足，跳過
                 
             hist['MA20'] = hist['Close'].rolling(window=20).mean()
             hist['MA60'] = hist['Close'].rolling(window=60).mean()
             hist['MA5_Vol'] = hist['Volume'].rolling(window=5).mean()
             
             latest = hist.iloc[-1]
-            close_price = latest['Close']
-            ma20 = latest['MA20']
-            ma60 = latest['MA60']
-            volume = latest['Volume'] / 1000
-            ma5_vol = latest['MA5_Vol'] / 1000
+            close_price = float(latest['Close'])
+            ma20 = float(latest['MA20'])
+            ma60 = float(latest['MA60'])
+            volume = float(latest['Volume']) / 1000
+            ma5_vol = float(latest['MA5_Vol']) / 1000
             
             bias_20 = ((close_price - ma20) / ma20) * 100
             
             stock_data = {
                 '代號': stock_code,
-                '名稱': row.get('名稱', '未知'),
+                '名稱': str(row.get('名稱', '未知')),
                 '收盤價': round(close_price, 2),
                 'MA20_乖離率': round(bias_20, 2),
                 'MA60': round(ma60, 2),
                 '成交量': round(volume, 0),
                 '5日均量': round(ma5_vol, 0),
-                '投信買賣超': row.get('投信買賣超', 0),
-                '外資買賣超': row.get('外資買賣超', 0),
-                '周轉率': row.get('周轉率', 0)
+                '投信買賣超': float(row.get('投信買賣超', 0)),
+                '外資買賣超': float(row.get('外資買賣超', 0)),
+                '周轉率': float(row.get('周轉率', 0))
             }
             results.append(stock_data)
         except Exception:
             pass
             
-        # 安全更新進度條
         progress_bar.progress((current_step + 1) / total_stocks)
         status_text.text(f"正在掃描: {stock_code} ({current_step + 1}/{total_stocks})")
         
@@ -94,13 +98,25 @@ def fetch_and_calculate(df_chips):
 def v18_funnel_filter_and_score(df, intraday_mode):
     filtered_df = df.copy()
     
+    # V18.6 確保欄位型態正確，避免 str 與 int 比較錯誤
+    filtered_df['投信買賣超'] = pd.to_numeric(filtered_df['投信買賣超'], errors='coerce').fillna(0)
+    filtered_df['外資買賣超'] = pd.to_numeric(filtered_df['外資買賣超'], errors='coerce').fillna(0)
+    filtered_df['收盤價'] = pd.to_numeric(filtered_df['收盤價'], errors='coerce').fillna(0)
+    filtered_df['MA60'] = pd.to_numeric(filtered_df['MA60'], errors='coerce').fillna(0)
+    filtered_df['MA20_乖離率'] = pd.to_numeric(filtered_df['MA20_乖離率'], errors='coerce').fillna(0)
+    
     filtered_df = filtered_df[(filtered_df['投信買賣超'] >= min_trust_buy) & (filtered_df['外資買賣超'] > -1000)]
     filtered_df = filtered_df[filtered_df['收盤價'] > filtered_df['MA60']]
     filtered_df = filtered_df[filtered_df['MA20_乖離率'] <= max_bias]
     
     if not intraday_mode:
-        if '周轉率' in filtered_df.columns and (filtered_df['周轉率'] > 0).any():
-            filtered_df = filtered_df[filtered_df['周轉率'] <= max_turnover]
+        if '周轉率' in filtered_df.columns:
+            filtered_df['周轉率'] = pd.to_numeric(filtered_df['周轉率'], errors='coerce').fillna(0)
+            if (filtered_df['周轉率'] > 0).any():
+                filtered_df = filtered_df[filtered_df['周轉率'] <= max_turnover]
+                
+        filtered_df['成交量'] = pd.to_numeric(filtered_df['成交量'], errors='coerce').fillna(0)
+        filtered_df['5日均量'] = pd.to_numeric(filtered_df['5日均量'], errors='coerce').fillna(0)
         filtered_df = filtered_df[filtered_df['成交量'] >= (filtered_df['5日均量'] * vol_expansion)]
     
     if filtered_df.empty:
@@ -170,20 +186,20 @@ if uploaded_file is not None:
         if '代號' in df_raw.columns:
             df_raw['代號'] = df_raw['代號'].astype(str).str.strip()
             df_raw = df_raw[df_raw['代號'].str.match(r'^\d{4}$')]
-            # V18.5 修正：重新編排座位號碼，防止進度條錯亂
             df_raw = df_raw.reset_index(drop=True)
         
+        # V18.6 暴力轉型：確保所有計算欄位絕對是數字
         for col in ['投信買賣超', '外資買賣超', '周轉率']:
-            if col in df_raw.columns:
-                if df_raw[col].dtype == object:
-                    df_raw[col] = pd.to_numeric(df_raw[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+            if col not in df_raw.columns:
+                df_raw[col] = 0
+            df_raw[col] = pd.to_numeric(df_raw[col].astype(str).str.replace(',', '').str.strip(), errors='coerce').fillna(0)
         
         if '代號' not in df_raw.columns:
             st.error(f"⚠️ 找不到「代號」欄位！目前 CSV 擁有的欄位為：{list(df_raw.columns)}")
         else:
-            st.success(f"✅ 成功匯入籌碼資料，過濾權證與雜訊後，共保留 {len(df_raw)} 檔純血普通股。")
+            st.success(f"✅ 成功匯入籌碼資料，過濾權證與雜訊後，共保留 {len(df_raw)} 檔純血普通股 (包含上市與上櫃)。")
             
-            if st.button("🚀 啟動 V18.5 漏斗掃描"):
+            if st.button("🚀 啟動 V18.6 漏斗掃描"):
                 with st.spinner("正在聯網獲取即時報價與計算指標..."):
                     df_analyzed = fetch_and_calculate(df_raw)
                     df_final = v18_funnel_filter_and_score(df_analyzed, is_intraday)
