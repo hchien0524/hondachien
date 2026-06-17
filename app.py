@@ -3,13 +3,12 @@ import pandas as pd
 import yfinance as yf
 import numpy as np
 import io
-import re
 
 # ==========================================
 # 1. 系統初始化與 UI 設定
 # ==========================================
-st.set_page_config(page_title="HIOS Wave Radar V18.7", layout="wide")
-st.title("🌊 HIOS Wave Radar V18.7 - 機構級量化雷達 (終極校正版)")
+st.set_page_config(page_title="HIOS Wave Radar V18.8", layout="wide")
+st.title("🌊 HIOS Wave Radar V18.8 - 機構級量化雷達 (完全體)")
 st.markdown("### 雙核心引擎：低乖離防守 × 投信動能攻擊 (支援上市/上櫃)")
 
 # ==========================================
@@ -46,6 +45,7 @@ def fetch_and_calculate(df_chips):
     
     for current_step, (idx, row) in enumerate(df_chips.iterrows()):
         stock_code = str(row['代號']).strip()
+        market_type = "上市" # 預設為上市
         
         try:
             yf_code = f"{stock_code}.TW" 
@@ -53,6 +53,7 @@ def fetch_and_calculate(df_chips):
             
             if len(hist) < 60:
                 yf_code = f"{stock_code}.TWO"
+                market_type = "上櫃" # 切換為上櫃
                 hist = yf.Ticker(yf_code).history(period="3mo")
                 
             if len(hist) < 60:
@@ -74,6 +75,7 @@ def fetch_and_calculate(df_chips):
             stock_data = {
                 '代號': stock_code,
                 '名稱': str(row.get('名稱', '未知')),
+                '市場': market_type, # V18.8 新增：市場標示
                 '收盤價': round(close_price, 2),
                 'MA20_乖離率': round(bias_20, 2),
                 'MA60': round(ma60, 2),
@@ -120,9 +122,11 @@ def v18_funnel_filter_and_score(df, intraday_mode):
     if filtered_df.empty:
         return filtered_df
         
-    t_min, t_max = filtered_df['投信買賣超'].min(), filtered_df['投信買賣超'].max()
+    # V18.8 修正：設定投信計分天花板 (2000張)，避免巨鯨擠壓效應導致分數過低
+    capped_trust = filtered_df['投信買賣超'].clip(upper=2000)
+    t_min, t_max = capped_trust.min(), capped_trust.max()
     if t_max > t_min:
-        filtered_df['投信分數'] = (filtered_df['投信買賣超'] - t_min) / (t_max - t_min) * 60
+        filtered_df['投信分數'] = (capped_trust - t_min) / (t_max - t_min) * 60
     else:
         filtered_df['投信分數'] = 60
         
@@ -142,7 +146,7 @@ def v18_funnel_filter_and_score(df, intraday_mode):
         else: return '🌟🌟'
         
     filtered_df['推薦星等'] = filtered_df['綜合評分'].apply(get_stars)
-    display_cols = ['代號', '名稱', '收盤價', '綜合評分', '推薦星等', 'MA20_乖離率', '投信買賣超', '外資買賣超', '成交量', '5日均量']
+    display_cols = ['代號', '名稱', '市場', '收盤價', '綜合評分', '推薦星等', 'MA20_乖離率', '投信買賣超', '外資買賣超', '成交量', '5日均量']
     return filtered_df[display_cols]
 
 # ==========================================
@@ -172,10 +176,8 @@ if uploaded_file is not None:
                 break
                 
         df_raw = pd.read_csv(io.StringIO(decoded_text), skiprows=skip_rows)
-        
         df_raw.columns = df_raw.columns.str.strip()
         
-        # V18.7 修正：加入證交所專屬的「外陸資」超長欄位名稱
         col_mapping = {
             '證券代號': '代號', '股票代號': '代號',
             '證券名稱': '名稱', '股票名稱': '名稱',
@@ -195,8 +197,6 @@ if uploaded_file is not None:
                 df_raw[col] = 0
             df_raw[col] = pd.to_numeric(df_raw[col].astype(str).str.replace(',', '').str.strip(), errors='coerce').fillna(0)
             
-        # V18.7 修正：AI 智慧單位轉換 (股 -> 張)
-        # 如果發現最大值超過 20000，極大機率是官方的「股數」，自動除以 1000
         if df_raw['投信買賣超'].abs().max() > 20000:
             df_raw['投信買賣超'] = np.round(df_raw['投信買賣超'] / 1000, 0)
         if df_raw['外資買賣超'].abs().max() > 20000:
@@ -205,9 +205,9 @@ if uploaded_file is not None:
         if '代號' not in df_raw.columns:
             st.error(f"⚠️ 找不到「代號」欄位！目前 CSV 擁有的欄位為：{list(df_raw.columns)}")
         else:
-            st.success(f"✅ 成功匯入籌碼資料，過濾權證與雜訊後，共保留 {len(df_raw)} 檔純血普通股 (包含上市與上櫃)。")
+            st.success(f"✅ 成功匯入籌碼資料，過濾權證與雜訊後，共保留 {len(df_raw)} 檔純血普通股。")
             
-            if st.button("🚀 啟動 V18.7 漏斗掃描"):
+            if st.button("🚀 啟動 V18.8 漏斗掃描"):
                 with st.spinner("正在聯網獲取即時報價與計算指標..."):
                     df_analyzed = fetch_and_calculate(df_raw)
                     df_final = v18_funnel_filter_and_score(df_analyzed, is_intraday)
@@ -216,8 +216,17 @@ if uploaded_file is not None:
                         st.balloons()
                         mode_text = "盤中狙擊模式 (已放寬量能濾網)" if is_intraday else "盤後嚴格模式 (全鐵門啟動)"
                         st.markdown(f"### 🎯 掃描完成！[{mode_text}] 共篩選出 {len(df_final)} 檔 S 級真龍")
-                        # V18.7 修正：移除 matplotlib 漸層上色，素顏完美呈現
                         st.dataframe(df_final)
+                        
+                        # V18.8 新增：一鍵呼叫 Manus 分析指令
+                        st.markdown("---")
+                        st.markdown("### 🤖 人機協同：一鍵呼叫 Manus 深度分析")
+                        st.info("請點擊下方框框右上角的「複製」按鈕，將指令貼給 Manus 進行深度產業分析：")
+                        
+                        prompt = f"我是指揮官。請以頂級量化專家的身分，幫我深度分析以下 {len(df_final)} 檔通過 V18 嚴格濾網的股票。請著重於基本面、產業前景，並給我 100 萬資金的配置建議：\n\n"
+                        prompt += df_final[['代號', '名稱', '市場', '收盤價', '投信買賣超', '外資買賣超']].to_string(index=False)
+                        st.code(prompt, language="text")
+                        
                     else:
                         st.warning("⚠️ 在目前的嚴格濾網下，沒有股票符合條件。這代表目前盤勢可能不佳，建議保留現金！")
                         
