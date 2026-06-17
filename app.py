@@ -8,8 +8,8 @@ import re
 # ==========================================
 # 1. 系統初始化與 UI 設定
 # ==========================================
-st.set_page_config(page_title="HIOS Wave Radar V18.4", layout="wide")
-st.title("🌊 HIOS Wave Radar V18.4 - 機構級量化雷達")
+st.set_page_config(page_title="HIOS Wave Radar V18.5", layout="wide")
+st.title("🌊 HIOS Wave Radar V18.5 - 機構級量化雷達")
 st.markdown("### 雙核心引擎：低乖離防守 × 投信動能攻擊 (漏斗篩選架構)")
 
 # ==========================================
@@ -44,7 +44,8 @@ def fetch_and_calculate(df_chips):
     status_text = st.empty()
     total_stocks = len(df_chips)
     
-    for i, row in df_chips.iterrows():
+    # V18.5 修正：使用 enumerate 確保進度條絕對不會超過 100%
+    for current_step, (idx, row) in enumerate(df_chips.iterrows()):
         stock_code = str(row['代號']).strip()
         yf_code = f"{stock_code}.TW" 
         
@@ -82,8 +83,9 @@ def fetch_and_calculate(df_chips):
         except Exception:
             pass
             
-        progress_bar.progress((i + 1) / total_stocks)
-        status_text.text(f"正在掃描: {stock_code} ({i+1}/{total_stocks})")
+        # 安全更新進度條
+        progress_bar.progress((current_step + 1) / total_stocks)
+        status_text.text(f"正在掃描: {stock_code} ({current_step + 1}/{total_stocks})")
         
     progress_bar.empty()
     status_text.empty()
@@ -130,7 +132,7 @@ def v18_funnel_filter_and_score(df, intraday_mode):
     return filtered_df[display_cols]
 
 # ==========================================
-# 4. 主程式執行區 (加入純血普通股濾網)
+# 4. 主程式執行區
 # ==========================================
 if uploaded_file is not None:
     try:
@@ -165,11 +167,11 @@ if uploaded_file is not None:
         }
         df_raw = df_raw.rename(columns=col_mapping)
         
-        # --- V18.4 核心：純血普通股濾網 (只保留 4 碼數字) ---
         if '代號' in df_raw.columns:
             df_raw['代號'] = df_raw['代號'].astype(str).str.strip()
-            # 剔除權證、ETF，只保留剛好 4 個數字的代號
             df_raw = df_raw[df_raw['代號'].str.match(r'^\d{4}$')]
+            # V18.5 修正：重新編排座位號碼，防止進度條錯亂
+            df_raw = df_raw.reset_index(drop=True)
         
         for col in ['投信買賣超', '外資買賣超', '周轉率']:
             if col in df_raw.columns:
@@ -181,7 +183,7 @@ if uploaded_file is not None:
         else:
             st.success(f"✅ 成功匯入籌碼資料，過濾權證與雜訊後，共保留 {len(df_raw)} 檔純血普通股。")
             
-            if st.button("🚀 啟動 V18.4 漏斗掃描"):
+            if st.button("🚀 啟動 V18.5 漏斗掃描"):
                 with st.spinner("正在聯網獲取即時報價與計算指標..."):
                     df_analyzed = fetch_and_calculate(df_raw)
                     df_final = v18_funnel_filter_and_score(df_analyzed, is_intraday)
