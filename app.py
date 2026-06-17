@@ -79,7 +79,6 @@ if run_btn:
         except Exception as e: 
             st.error(f"CSV 解析失敗，請確認檔案格式。錯誤細節: {e}")
 
-
     tt, nd = [], {}
     if sm == "自選":
         for t in [x.strip() for x in ti.split(",")]:
