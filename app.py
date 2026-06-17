@@ -157,8 +157,15 @@ def v18_funnel_filter_and_score(df):
 # ==========================================
 if uploaded_file is not None:
     try:
-        df_raw = pd.read_csv(uploaded_file)
+        # 加入自動編碼切換機制
+        try:
+            df_raw = pd.read_csv(uploaded_file, encoding='utf-8')
+        except UnicodeDecodeError:
+            uploaded_file.seek(0) # 將檔案指標移回開頭
+            df_raw = pd.read_csv(uploaded_file, encoding='big5')
+            
         st.success(f"✅ 成功匯入籌碼資料，共 {len(df_raw)} 筆標的。")
+
         
         if st.button("🚀 啟動 V18 漏斗掃描"):
             with st.spinner("正在聯網獲取即時報價與計算指標..."):
