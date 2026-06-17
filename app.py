@@ -1,167 +1,182 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-import json, os
-from datetime import datetime as dt
-import twstock
+import numpy as np
+from datetime import datetime, timedelta
 
-st.set_page_config(page_title="HIOS V17 主控台", layout="wide")
-st.title("🚀 HIOS 量化操盤系統 V17.0 (戰術主控台)")
+# ==========================================
+# 1. 系統初始化與 UI 設定
+# ==========================================
+st.set_page_config(page_title="HIOS Wave Radar V18.0", layout="wide")
+st.title("🌊 HIOS Wave Radar V18.0 - 機構級量化雷達")
+st.markdown("### 雙核心引擎：低乖離防守 × 投信動能攻擊 (漏斗篩選架構)")
 
-# --- 1. 大盤多空晴雨表 ---
-@st.cache_data(ttl=3600)
-def get_twii():
-    try:
-        df = yf.download("^TWII", period="2mo", progress=False)
-        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
-        return float(df['Close'].iloc[-1]), float(df['Close'].rolling(20).mean().iloc[-1])
-    except: return None
+# ==========================================
+# 2. 側邊欄：參數設定與資料匯入
+# ==========================================
+st.sidebar.header("⚙️ 戰術參數設定")
 
-twii = get_twii()
-if twii:
-    c, m = twii
-    if c > m: st.success(f"🟢 大盤晴雨表：多頭強勢 (指數 {c:.0f} > 月線 {m:.0f}) | 建議資金水位：70%~100%")
-    else: st.warning(f"🟡 大盤晴雨表：震盪防守 (指數 {c:.0f} < 月線 {m:.0f}) | 建議資金水位：30%~50%")
+# 策略選擇
+strategy = st.sidebar.radio("選擇策略", ["A策略 (低乖離防守)", "B策略 (季線突破動能)"])
 
-# --- 2. 參數設定與資料匯入 ---
-with st.expander("⚙️ 展開 S 級真龍濾網參數", expanded=True):
-    col1, col2, col3 = st.columns(3)
-    sm = col1.radio("掃描範圍", ("自選", "上市", "上櫃", "全市場"), horizontal=True)
-    ti = col1.text_input("自選代號 (逗號分隔)", "2382,3413,3015,8210") if sm == "自選" else ""
-    csv_file = col1.file_uploader("上傳三大法人買賣超 CSV (強烈建議)", type=['csv'])
+# V18 新增：漏斗篩選參數
+st.sidebar.markdown("---")
+st.sidebar.subheader("🛡️ 絕對濾網 (Hard Filters)")
+min_trust_buy = st.sidebar.number_input("投信買超下限 (張)", value=100, step=50)
+max_bias = st.sidebar.number_input("MA20 乖離率上限 (%)", value=5.0, step=0.5)
+max_turnover = st.sidebar.number_input("周轉率上限 (%)", value=10.0, step=1.0, help="排除當沖妖股")
+vol_expansion = st.sidebar.number_input("溫和放量倍數 (今日/5日均量)", value=1.2, step=0.1, help="確保有大人點火")
+
+st.sidebar.markdown("---")
+uploaded_file = st.sidebar.file_uploader("上傳三大法人 CSV (請確保為最新交易日)", type="csv")
+
+# ==========================================
+# 3. 核心運算函數
+# ==========================================
+@st.cache_data(ttl=300) # 快取 5 分鐘
+def fetch_and_calculate(df_chips):
+    """抓取 yfinance 即時報價並計算技術指標"""
+    results = []
     
-    a_bias = col2.slider("MA20 乖離上限(%)", 1.0, 15.0, 5.0)
-    val_limit = col2.number_input("成交值下限 (億)", 0.0, 100.0, 1.0)
+    # 建立進度條
+    progress_bar = st.progress(0)
+    status_text = st.empty()
     
-    t_buy = col3.number_input("投信買超下限 (張)", -10000, 10000, 100)
-    f_buy = col3.number_input("外資買超下限 (張)", -10000, 10000, 0)
-    strict_ma = col3.checkbox("嚴格模式：均線多頭排列 (MA5>MA10>MA20)")
+    total_stocks = len(df_chips)
     
-    run_btn = st.button("🚀 啟動全市場掃描", use_container_width=True)
-
-# --- 3. 核心抓取邏輯 ---
-@st.cache_data
-def get_tickers(m):
-    tm = "上市" if "上市" in m else "上櫃"
-    return [f"{c}{'.TW' if tm=='上市' else '.TWO'}" for c,i in twstock.codes.items() if i.type=='股票' and i.market==tm and len(c)==4], {c:i.name for c,i in twstock.codes.items() if i.type=='股票' and i.market==tm and len(c)==4}
-
-if run_btn:
-    chip_data = {}
-    if csv_file:
+    for i, row in df_chips.iterrows():
+        stock_code = str(row['代號']).strip()
+        # 簡單判斷上市櫃 (這裡簡化處理，統一先試 .TW，若無資料可擴充 .TWO)
+        yf_code = f"{stock_code}.TW" 
+        
         try:
-            # 終極破解：使用 cp950 並強制忽略無法辨識的罕見字 (encoding_errors='ignore')
-            try:
-                cdf = pd.read_csv(csv_file, encoding='utf-8')
-            except:
-                csv_file.seek(0)
-                cdf = pd.read_csv(csv_file, encoding='cp950', encoding_errors='ignore')
+            # 抓取近 3 個月資料算均線
+            hist = yf.Ticker(yf_code).history(period="3mo")
+            if len(hist) < 60:
+                continue # 資料不足跳過
                 
-            if not any('代號' in str(c) or '代碼' in str(c) or 'Code' in str(c) for c in cdf.columns):
-                csv_file.seek(0)
-                cdf = pd.read_csv(csv_file, encoding='cp950', encoding_errors='ignore', skiprows=1)
-                if not any('代號' in str(c) or '代碼' in str(c) or 'Code' in str(c) for c in cdf.columns):
-                    csv_file.seek(0)
-                    cdf = pd.read_csv(csv_file, encoding='cp950', encoding_errors='ignore', skiprows=2)
-
-            c_col = [c for c in cdf.columns if '代號' in c or '代碼' in c or 'Code' in c][0]
-            t_col = [c for c in cdf.columns if '投信' in c][0]
-            f_col = [c for c in cdf.columns if '外資' in c][0]
+            # 計算技術指標
+            hist['MA20'] = hist['Close'].rolling(window=20).mean()
+            hist['MA60'] = hist['Close'].rolling(window=60).mean()
+            hist['MA5_Vol'] = hist['Volume'].rolling(window=5).mean()
             
-            for _, r in cdf.iterrows():
-                try:
-                    t_val = str(r[t_col]).replace(',', '').strip()
-                    f_val = str(r[f_col]).replace(',', '').strip()
-                    t_num = float(t_val) if t_val not in ['nan', '', '-'] else 0
-                    f_num = float(f_val) if f_val not in ['nan', '', '-'] else 0
-                    
-                    # 證交所單位是「股」，若數字大於一萬，自動除以 1000 轉成「張」
-                    if abs(t_num) > 10000 or abs(f_num) > 10000:
-                        t_num, f_num = t_num / 1000, f_num / 1000
-                        
-                    chip_data[str(r[c_col]).strip()] = {"投": t_num, "外": f_num}
-                except: pass
-        except Exception as e: 
-            st.error(f"CSV 解析失敗，請確認檔案格式。錯誤細節: {e}")
+            # 取得最新一筆資料
+            latest = hist.iloc[-1]
+            close_price = latest['Close']
+            ma20 = latest['MA20']
+            ma60 = latest['MA60']
+            volume = latest['Volume'] / 1000 # 轉換為張數
+            ma5_vol = latest['MA5_Vol'] / 1000
+            
+            # 計算乖離率
+            bias_20 = ((close_price - ma20) / ma20) * 100
+            
+            # 整合資料
+            stock_data = {
+                '代號': stock_code,
+                '名稱': row.get('名稱', '未知'),
+                '收盤價': round(close_price, 2),
+                'MA20_乖離率': round(bias_20, 2),
+                'MA60': round(ma60, 2),
+                '成交量': round(volume, 0),
+                '5日均量': round(ma5_vol, 0),
+                '投信買賣超': row.get('投信買賣超', 0),
+                '外資買賣超': row.get('外資買賣超', 0),
+                '周轉率': row.get('周轉率', 0) # 若 CSV 沒有此欄位預設為 0
+            }
+            results.append(stock_data)
+            
+        except Exception as e:
+            pass # 忽略錯誤標的
+            
+        # 更新進度
+        progress_bar.progress((i + 1) / total_stocks)
+        status_text.text(f"正在掃描: {stock_code} ({i+1}/{total_stocks})")
+        
+    progress_bar.empty()
+    status_text.empty()
+    return pd.DataFrame(results)
 
-    tt, nd = [], {}
-    if sm == "自選":
-        for t in [x.strip() for x in ti.split(",")]:
-            pc = t.split('.')[0]
-            if pc in twstock.codes:
-                nd[pc] = twstock.codes[pc].name
-                tt.append(f"{pc}{'.TW' if twstock.codes[pc].market=='上市' else '.TWO'}")
-            else: tt.append(f"{pc}.TW")
-    elif sm == "全市場":
-        t1, n1 = get_tickers("上市")
-        t2, n2 = get_tickers("上櫃")
-        tt, nd = t1+t2, {**n1, **n2}
-    else: tt, nd = get_tickers(sm)
-
-    rr, pb, st_txt = [], st.progress(0), st.empty()
+def v18_funnel_filter_and_score(df):
+    """V18 機構級漏斗篩選與評分"""
+    filtered_df = df.copy()
     
-    for i, t in enumerate(tt):
-        pc = t.split('.')[0]
-        st_txt.text(f"掃描中 {t} ... ({i+1}/{len(tt)})")
-        try:
-            df = yf.download(t, period="3mo", progress=False)
-            if len(df) >= 60:
-                if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
-                c = float(df['Close'].iloc[-1])
-                v = float(df['Volume'].iloc[-1]) / 1000
-                rr.append({
-                    "代號": pc, "名稱": nd.get(pc,"未知"), "收盤價": round(c,2),
-                    "MA5": float(df['Close'].rolling(5).mean().iloc[-1]),
-                    "MA10": float(df['Close'].rolling(10).mean().iloc[-1]),
-                    "MA20": float(df['Close'].rolling(20).mean().iloc[-1]),
-                    "成交值(億)": round((c * v * 1000)/100000000, 2),
-                    "投信": chip_data.get(pc, {}).get("投", 0),
-                    "外資": chip_data.get(pc, {}).get("外", 0)
-                })
-        except: pass
-        pb.progress((i+1)/len(tt))
+    # --- 第一階段：絕對鐵門 (Hard Filters) ---
+    # 1. 籌碼鐵門：投信必須買超，外資不能大賣
+    filtered_df = filtered_df[(filtered_df['投信買賣超'] >= min_trust_buy) & (filtered_df['外資買賣超'] > -1000)]
     
-    st.session_state['raw_data'] = rr
-    st_txt.success(f"✅ 掃描完成！共取得 {len(rr)} 檔資料。")
+    # 2. 趨勢鐵門：收盤價必須大於季線 (拒絕接刀)
+    filtered_df = filtered_df[filtered_df['收盤價'] > filtered_df['MA60']]
     
-    # 📦 隱藏動作：儲存時光膠囊
-    if not os.path.exists("snapshots"): os.makedirs("snapshots")
-    with open(f"snapshots/{dt.now().strftime('%Y-%m-%d_%H%M')}_snapshot.json", "w", encoding="utf-8") as f: 
-        json.dump(rr, f, ensure_ascii=False)
-
-# --- 4. 戰情儀表板與 Manus 匯出 ---
-if st.session_state.get('raw_data'):
-    df = pd.DataFrame(st.session_state['raw_data'])
-    df['乖離(%)'] = round((df['收盤價'] - df['MA20']) / df['MA20'] * 100, 2)
+    # 3. 乖離鐵門：MA20 乖離率必須小於上限
+    filtered_df = filtered_df[filtered_df['MA20_乖離率'] <= max_bias]
     
-    cond = (df['收盤價'] > df['MA20']) & (df['乖離(%)'] <= a_bias) & (df['成交值(億)'] >= val_limit) & (df['投信'] >= t_buy) & (df['外資'] >= f_buy)
-    if strict_ma: cond = cond & (df['MA5'] > df['MA10']) & (df['MA10'] > df['MA20'])
-    
-    dff = df[cond].copy()
-    
-    if not dff.empty:
-        def calc_score(r):
-            s = 50
-            if r['投信'] > 0: s += min(20, int(r['投信']/100))
-            if r['外資'] > 0: s += min(10, int(r['外資']/200))
-            if r['MA5'] > r['MA10'] > r['MA20']: s += 10
-            if r['乖離(%)'] < 3: s += 10
-            return min(100, s)
+    # 4. 周轉率鐵門 (若 CSV 有提供真實周轉率才嚴格執行，否則略過)
+    if (filtered_df['周轉率'] > 0).any():
+        filtered_df = filtered_df[filtered_df['周轉率'] <= max_turnover]
         
-        dff['評分'] = dff.apply(calc_score, axis=1)
-        dff['星級'] = dff['評分'].apply(lambda x: '🌟' * int(x/20))
-        dp = dff[['代號', '名稱', '收盤價', '評分', '星級', '乖離(%)', '成交值(億)', '投信', '外資']].sort_values('評分', ascending=False)
+    # 5. 動能鐵門：溫和放量
+    filtered_df = filtered_df[filtered_df['成交量'] >= (filtered_df['5日均量'] * vol_expansion)]
+    
+    # --- 第二階段：優選評分 (Scoring) ---
+    if filtered_df.empty:
+        return filtered_df
         
-        st.markdown("### 📊 S 級真龍戰情室")
-        st.dataframe(dp, use_container_width=True, hide_index=True)
-        
-        # --- 5. Manus 專屬一鍵匯出 ---
-        st.markdown("### 🤖 Manus 聯網分析指令")
-        top_n = dp.head(5)
-        prompt = f"Manus 軍師，這是 HIOS 雷達今日 ({dt.now().strftime('%m/%d')}) 盤後過濾出的 Top {len(top_n)} 真龍名單，請協助我進行實戰決策：\n\n"
-        for _, r in top_n.iterrows():
-            prompt += f"- **{r['名稱']} ({r['代號']})**：收盤 {r['收盤價']}，評分 {r['評分']} {r['星級']}，投信買超 {r['投信']} 張，月線乖離 {r['乖離(%)']}%\n"
-        prompt += "\n**請幫我聯網查詢：** 這幾檔最新的法說會展望、營收動能與近期法人籌碼動向？並建議明天 50 萬資金該優先佈局哪一檔？"
-        
-        st.code(prompt, language="markdown")
+    # 投信分數 (權重 60%)
+    t_min, t_max = filtered_df['投信買賣超'].min(), filtered_df['投信買賣超'].max()
+    if t_max > t_min:
+        filtered_df['投信分數'] = (filtered_df['投信買賣超'] - t_min) / (t_max - t_min) * 60
     else:
-        st.warning("⚠️ 目前參數下沒有符合條件的股票，請嘗試放寬濾網！")
+        filtered_df['投信分數'] = 60
+        
+    # 乖離分數 (權重 40%，越低越好)
+    b_min, b_max = filtered_df['MA20_乖離率'].min(), filtered_df['MA20_乖離率'].max()
+    if b_max > b_min:
+        filtered_df['乖離分數'] = (b_max - filtered_df['MA20_乖離率']) / (b_max - b_min) * 40
+    else:
+        filtered_df['乖離分數'] = 40
+        
+    # 總分與星等
+    filtered_df['綜合評分'] = np.round(filtered_df['投信分數'] + filtered_df['乖離分數'], 0)
+    filtered_df = filtered_df.sort_values(by='綜合評分', ascending=False).reset_index(drop=True)
+    
+    def get_stars(score):
+        if score >= 90: return '🌟🌟🌟🌟🌟'
+        elif score >= 80: return '🌟🌟🌟🌟'
+        elif score >= 70: return '🌟🌟🌟'
+        else: return '🌟🌟'
+        
+    filtered_df['推薦星等'] = filtered_df['綜合評分'].apply(get_stars)
+    
+    # 整理顯示欄位
+    display_cols = ['代號', '名稱', '收盤價', '綜合評分', '推薦星等', 'MA20_乖離率', '投信買賣超', '外資買賣超', '成交量', '5日均量']
+    return filtered_df[display_cols]
+
+# ==========================================
+# 4. 主程式執行區
+# ==========================================
+if uploaded_file is not None:
+    try:
+        df_raw = pd.read_csv(uploaded_file)
+        st.success(f"✅ 成功匯入籌碼資料，共 {len(df_raw)} 筆標的。")
+        
+        if st.button("🚀 啟動 V18 漏斗掃描"):
+            with st.spinner("正在聯網獲取即時報價與計算指標..."):
+                # 1. 獲取資料
+                df_analyzed = fetch_and_calculate(df_raw)
+                
+                # 2. 漏斗篩選與評分
+                df_final = v18_funnel_filter_and_score(df_analyzed)
+                
+                # 3. 顯示結果
+                if not df_final.empty:
+                    st.balloons()
+                    st.markdown(f"### 🎯 掃描完成！共篩選出 {len(df_final)} 檔 S 級真龍")
+                    st.dataframe(df_final.style.background_gradient(subset=['綜合評分'], cmap='YlOrRd'))
+                else:
+                    st.warning("⚠️ 在目前的嚴格濾網下，沒有股票符合條件。這代表目前盤勢可能不佳，建議保留現金！")
+                    
+    except Exception as e:
+        st.error(f"檔案讀取錯誤: {e}")
+else:
+    st.info("請先從左側上傳今日最新的「三大法人.csv」檔案。")
