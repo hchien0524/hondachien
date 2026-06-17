@@ -49,15 +49,19 @@ if run_btn:
     chip_data = {}
     if csv_file:
         try:
-            # 自動破解 Big5 編碼與跳過多餘表頭
+            # 終極破解：使用 cp950 並強制忽略無法辨識的罕見字 (errors='ignore')
             try:
                 cdf = pd.read_csv(csv_file, encoding='utf-8')
             except:
                 csv_file.seek(0)
-                cdf = pd.read_csv(csv_file, encoding='big5', skiprows=1)
-                if not any('代號' in str(c) or '代碼' in str(c) for c in cdf.columns):
+                cdf = pd.read_csv(csv_file, encoding='cp950', errors='ignore')
+                
+            if not any('代號' in str(c) or '代碼' in str(c) or 'Code' in str(c) for c in cdf.columns):
+                csv_file.seek(0)
+                cdf = pd.read_csv(csv_file, encoding='cp950', errors='ignore', skiprows=1)
+                if not any('代號' in str(c) or '代碼' in str(c) or 'Code' in str(c) for c in cdf.columns):
                     csv_file.seek(0)
-                    cdf = pd.read_csv(csv_file, encoding='big5', skiprows=2)
+                    cdf = pd.read_csv(csv_file, encoding='cp950', errors='ignore', skiprows=2)
 
             c_col = [c for c in cdf.columns if '代號' in c or '代碼' in c or 'Code' in c][0]
             t_col = [c for c in cdf.columns if '投信' in c][0]
