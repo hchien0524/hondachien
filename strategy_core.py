@@ -23,6 +23,7 @@ def calculate_scores(df, min_trust, max_bias, mode):
     """
     雙大腦評分邏輯核心
     結合籌碼面 (投信/外資買超) 與 技術面 (MA20乖離率)
+    V23.1 更新：分數正規化，平衡籌碼與技術面權重
     """
     # 1. 初步濾網：投信買超必須大於設定下限
     df_filtered = df[df['投信買賣超'] >= min_trust].copy()
@@ -59,12 +60,16 @@ def calculate_scores(df, min_trust, max_bias, mode):
     if df_tech.empty:
         return pd.DataFrame()
 
-    # 4. 雙大腦評分邏輯
+    # 4. 雙大腦評分邏輯 (加入分數正規化，平衡籌碼與技術面權重)
+    # 將張數除以 100，讓 1000 張 = 10 分
+    trust_score = df_tech['投信買賣超'] / 100
+    foreign_score = df_tech['外資買賣超'] / 100
+
     # 【短波突擊大腦】：重視籌碼爆發力 (投信與外資共鳴)
-    df_tech['短波分數'] = (df_tech['投信買賣超'] * 0.6) + (df_tech['外資買賣超'] * 0.4)
+    df_tech['短波分數'] = (trust_score * 0.6) + (foreign_score * 0.4)
     
     # 【長線大底大腦】：重視低乖離與安全性 (乖離率越低，加分越多)
-    df_tech['長線分數'] = (df_tech['投信買賣超'] * 0.5) + ((max_bias - df_tech['乖離率(%)']) * 10)
+    df_tech['長線分數'] = (trust_score * 0.5) + ((max_bias - df_tech['乖離率(%)']) * 10)
 
     # 根據總司令選擇的模式，決定最終總分
     if mode == "短波突擊大腦":
@@ -78,7 +83,7 @@ def calculate_scores(df, min_trust, max_bias, mode):
     # 5. 排序與整理最終戰報
     df_tech = df_tech.sort_values(by='總分', ascending=False).round(2)
     
-    # 嚴格定義輸出的欄位順序，確保「乖離率(%)」絕對存在！
+    # 嚴格定義輸出的欄位順序
     cols = ['代號', '名稱', '收盤價', 'MA20', '乖離率(%)', '投信買賣超', '外資買賣超', '總分']
     
     return df_tech[cols]
