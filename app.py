@@ -5,54 +5,37 @@ import numpy as np
 import requests
 import io
 import re
-import json
-from datetime import datetime
 
 # ==========================================
-# 模組一：系統初始化與記憶體建構 (External Brain)
+# 模組一：系統初始化與記憶體建構
 # ==========================================
-st.set_page_config(page_title="HIOS Wave Radar V20", layout="wide")
-st.title("🌊 HIOS Wave Radar V20 - 法人完全體")
+st.set_page_config(page_title="HIOS Wave Radar V20.1", layout="wide")
+st.title("🌊 HIOS Wave Radar V20.1 - 盤中緊急修復版")
 st.markdown("### 終極量化核心：API 直連 × 多維度絕對評分 × 記憶傳承系統")
 
-# 初始化永久記憶體 (Session State)
 if 'scan_results' not in st.session_state: st.session_state['scan_results'] = pd.DataFrame()
 if 'portfolio' not in st.session_state: st.session_state['portfolio'] = []
-if 'history_log' not in st.session_state: st.session_state['history_log'] = []
 
-# ==========================================
-# 模組二：數據源革命 (API 直連 + CSV 備用)
-# ==========================================
 # ==========================================
 # 模組二：數據源革命 (API 直連 + CSV 備用)
 # ==========================================
 @st.cache_data(ttl=3600)
 def fetch_api_data():
-    """透過政府 OpenAPI 直接抓取三大法人數據，徹底消滅 CSV 亂碼"""
     df_list = []
-    # 加上終極偽裝面具，騙過政府防火牆
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    }
-    
-    # 1. 上市法人 (TWSE)
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'}
     try:
-        res = requests.get("https://openapi.twse.com.tw/v1/fund/T86_ALL", headers=headers, timeout=15 )
+        res = requests.get("https://openapi.twse.com.tw/v1/fund/T86_ALL", headers=headers, timeout=10 )
         if res.status_code == 200:
-            data = res.json()
-            df_twse = pd.DataFrame(data)
+            df_twse = pd.DataFrame(res.json())
             df_twse = df_twse.rename(columns={'Code': '代號', 'Name': '名稱', 'ForeignInvestorDiff': '外資買賣超', 'InvestmentTrustDiff': '投信買賣超'})
             df_twse['市場'] = '上市'
             df_list.append(df_twse[['代號', '名稱', '市場', '外資買賣超', '投信買賣超']])
     except: pass
 
-    # 2. 上櫃法人 (TPEx)
     try:
-        res = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_fund", headers=headers, timeout=15 )
+        res = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_fund", headers=headers, timeout=10 )
         if res.status_code == 200:
-            data = res.json()
-            df_tpex = pd.DataFrame(data)
-            # 修復錯字：確保外資買賣超正確對齊
+            df_tpex = pd.DataFrame(res.json())
             df_tpex = df_tpex.rename(columns={'SecuritiesCompanyCode': '代號', 'CompanyName': '名稱', 'ForeignInvestmentTrustDifference': '外資買賣超', 'InvestmentTrustDifference': '投信買賣超'})
             df_tpex['市場'] = '上櫃'
             df_list.append(df_tpex[['代號', '名稱', '市場', '外資買賣超', '投信買賣超']])
@@ -60,18 +43,70 @@ def fetch_api_data():
 
     if df_list:
         df_all = pd.concat(df_list, ignore_index=True)
-        # 清洗數字 (將股數轉為張數)
         for col in ['外資買賣超', '投信買賣超']:
             df_all[col] = pd.to_numeric(df_all[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
-            df_all[col] = np.round(df_all[col] / 1000, 0) # 股轉張
+            df_all[col] = np.round(df_all[col] / 1000, 0)
         return df_all[df_all['代號'].str.match(r'^\d{4}$')]
     return pd.DataFrame()
+
+def clean_number(val):
+    if pd.isna(val): return 0
+    val_str = str(val).strip()
+    if val_str.startswith('(') and val_str.endswith(')'): val_str = '-' + val_str[1:-1]
+    val_str = re.sub(r'[^\d\.-]', '', val_str)
+    try: return float(val_str) if val_str else 0
+    except: return 0
+
+def parse_chip_csv(uploaded_file):
+    uploaded_file.seek(0) # 致命 Bug 修復：檔案指標歸零
+    raw_bytes = uploaded_file.read()
+    decoded_text = None
+    for enc in ['utf-8-sig', 'utf-8', 'cp950', 'big5']:
+        try:
+            decoded_text = raw_bytes.decode(enc)
+            break
+        except: continue
+    if not decoded_text: decoded_text = raw_bytes.decode('cp950', errors='ignore')
+    
+    lines = decoded_text.splitlines()
+    skip_rows = 0
+    for i, line in enumerate(lines):
+        if '代號' in line.replace(' ', '').replace('"', ''):
+            skip_rows = i
+            break
+            
+    df = pd.read_csv(io.StringIO(decoded_text), skiprows=skip_rows)
+    
+    trust_col, foreign_col, code_col, name_col = None, None, None, None
+    for c in df.columns:
+        c_str = str(c).replace(' ', '').replace('"', '').replace('\n', '').replace('\r', '')
+        if '代號' in c_str and not code_col: code_col = c
+        elif '名稱' in c_str and not name_col: name_col = c
+        elif '投信' in c_str and '買賣超' in c_str and '金額' not in c_str and not trust_col: trust_col = c
+        elif ('外資' in c_str or '外陸資' in c_str) and '買賣超' in c_str and '金額' not in c_str and not foreign_col: foreign_col = c
+            
+    df_clean = pd.DataFrame()
+    df_clean['代號'] = df[code_col].astype(str).str.strip() if code_col else ""
+    df_clean['名稱'] = df[name_col].astype(str).str.strip() if name_col else ""
+    df_clean = df_clean[df_clean['代號'].str.match(r'^\d{4}$')]
+    
+    def extract_and_clean(target_col):
+        if target_col and target_col in df.columns:
+            s = df[target_col].apply(clean_number)
+            if '股' in str(target_col) or s.abs().max() > 20000: s = np.round(s / 1000, 0)
+            return s.loc[df_clean.index]
+        return pd.Series(0, index=df_clean.index)
+        
+    df_clean['投信買賣超'] = extract_and_clean(trust_col)
+    df_clean['外資買賣超'] = extract_and_clean(foreign_col)
+    df_clean['市場'] = '未知'
+    return df_clean
 
 # ==========================================
 # 模組三：側邊欄戰略控制台
 # ==========================================
 st.sidebar.header("⚙️ 戰術參數設定")
-data_source = st.sidebar.radio("📡 數據來源", ["🌐 自動 API 直連 (推薦)", "📁 手動 CSV 上傳 (備用)"])
+data_source = st.sidebar.radio("📡 數據來源", ["📁 手動 CSV 上傳 (備用)", "🌐 自動 API 直連 (推薦)"])
 uploaded_files = None
 if data_source == "📁 手動 CSV 上傳 (備用)":
     uploaded_files = st.sidebar.file_uploader("📥 上傳籌碼 CSV", type="csv", accept_multiple_files=True)
@@ -87,7 +122,7 @@ max_bias = st.sidebar.number_input("MA20 乖離率上限 (%)", value=5.0, step=0
 tab1, tab2, tab3 = st.tabs(["🎯 戰情雷達 (掃描)", "⚔️ 策略競技場 (分析)", "🧠 記憶傳承 (存檔)"])
 
 with tab1:
-    if st.button("🚀 啟動 V20 終極掃描", type="primary"):
+    if st.button("🚀 啟動 V20.1 終極掃描", type="primary"):
         with st.spinner("系統運作中：正在獲取籌碼數據..."):
             df_master = pd.DataFrame()
             if data_source == "🌐 自動 API 直連 (推薦)":
@@ -98,7 +133,6 @@ with tab1:
             
             if df_master.empty: st.stop()
             
-            # 初篩：投信有買，外資沒大賣
             df_to_scan = df_master[(df_master['投信買賣超'] >= min_trust_buy) & (df_master['外資買賣超'] > -1000)]
             if df_to_scan.empty:
                 st.warning("⚠️ 條件下無股票通過初篩。")
@@ -138,24 +172,20 @@ with tab1:
                         bias_20 = ((close_price - ma20) / ma20) * 100
                         
                         if close_price > ma60 and bias_20 <= max_bias:
-                            # --- 絕對評分引擎啟動 ---
                             score_chip, score_tech, score_fund = 0, 0, 0
                             comments = []
                             
-                            # 1. 籌碼力 (滿分 40)
-                            trust_amt = (row['投信買賣超'] * close_price) / 10 # 單位：百萬
+                            trust_amt = (row['投信買賣超'] * close_price) / 10
                             if trust_amt > 50: score_chip += 20; comments.append("重金鎖碼")
                             elif trust_amt > 20: score_chip += 10
                             if row['外資買賣超'] > 0: score_chip += 10; comments.append("土洋齊買")
                             if volume > 0 and (row['投信買賣超'] / volume) > 0.05: score_chip += 10; comments.append("高集中度")
                             
-                            # 2. 技術力 (滿分 30)
                             ma_max, ma_min = max(ma5, ma20, ma60), min(ma5, ma20, ma60)
                             if (ma_max / ma_min) < 1.03: score_tech += 15; comments.append("均線糾結")
                             if 0 < bias_20 < 3: score_tech += 10; comments.append("低乖離")
                             if volume > (ma5_vol * 1.2): score_tech += 5; comments.append("溫和放量")
                             
-                            # 3. 基本力 (滿分 30) - 透過 yfinance info 獲取
                             info = ticker.info
                             rev_growth = info.get('revenueGrowth', 0)
                             if rev_growth and rev_growth > 0.1: score_fund += 15; comments.append("營收雙位數成長")
@@ -183,8 +213,7 @@ with tab1:
             df_final = df_final.sort_values(by='總分', ascending=False).reset_index(drop=True)
             st.session_state['scan_results'] = df_final
             st.balloons()
-            st.success(f"✅ 掃描完成！共篩選出 {len(df_final)} 檔標的，已採用「絕對評分引擎」重新計分。")
-            st.dataframe(df_final)
+            st.success(f"✅ 掃描完成！共篩選出 {len(df_final)} 檔標的。")
         else:
             st.warning("⚠️ 未掃描到符合條件的標的。")
 
@@ -197,50 +226,40 @@ with tab1:
 # ==========================================
 with tab2:
     st.markdown("### ⚔️ 策略競技場：多維度戰力分析")
-    if st.session_state['scan_results'].empty:
-        st.info("💡 請先在「戰情雷達」執行掃描。")
-    else:
+    if not st.session_state['scan_results'].empty:
         df_arena = st.session_state['scan_results']
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.markdown("#### 💰 籌碼霸主 (大人重金)")
+            st.markdown("#### 💰 籌碼霸主")
             st.dataframe(df_arena.sort_values('籌碼力(40)', ascending=False)[['代號', '名稱', '籌碼力(40)', '系統短評']].head(3))
         with col2:
-            st.markdown("#### 📈 技術型態王 (均線糾結)")
+            st.markdown("#### 📈 技術型態王")
             st.dataframe(df_arena.sort_values('技術力(30)', ascending=False)[['代號', '名稱', '技術力(30)', '系統短評']].head(3))
         with col3:
-            st.markdown("#### 🏢 基本面護體 (營收成長)")
+            st.markdown("#### 🏢 基本面護體")
             st.dataframe(df_arena.sort_values('基本力(30)', ascending=False)[['代號', '名稱', '基本力(30)', '系統短評']].head(3))
 
 # ==========================================
-# 模組六：記憶傳承系統 (External Brain)
+# 模組六：記憶傳承系統
 # ==========================================
 with tab3:
     st.markdown("### 🧠 記憶傳承與戰情日誌")
-    
     col_a, col_b = st.columns(2)
     with col_a:
         st.markdown("#### 🛡️ 我的陣地 (持股備忘錄)")
         new_stock = st.text_input("新增持股 (例如：國產 33.8)")
-        if st.button("➕ 加入陣地"):
-            if new_stock: st.session_state['portfolio'].append(new_stock)
-        
+        if st.button("➕ 加入陣地") and new_stock: st.session_state['portfolio'].append(new_stock)
         if st.session_state['portfolio']:
-            for item in st.session_state['portfolio']:
-                st.markdown(f"- 🎯 {item}")
+            for item in st.session_state['portfolio']: st.markdown(f"- 🎯 {item}")
             if st.button("🗑️ 清空陣地"): st.session_state['portfolio'] = []
             
     with col_b:
         st.markdown("#### 🤖 一鍵喚醒 Manus 銜接碼")
-        st.info("當對話重置或 Manus 失憶時，請複製下方文字貼給 Manus，即可瞬間恢復所有戰略記憶！")
-        
         prompt_text = f"Manus，我是指揮官。這是 V20 系統的記憶包。\n"
         prompt_text += f"【目前持股陣地】：{', '.join(st.session_state['portfolio']) if st.session_state['portfolio'] else '空手'}\n"
         prompt_text += f"【最新掃描名單 (前5名)】：\n"
         if not st.session_state['scan_results'].empty:
             prompt_text += st.session_state['scan_results'].head(5)[['代號', '名稱', '總分', '系統短評']].to_string(index=False)
-        else:
-            prompt_text += "無最新名單\n"
+        else: prompt_text += "無最新名單\n"
         prompt_text += "\n請讀取以上記憶，並接續我們的戰術，為我分析今日的 100 萬資金動作。"
-        
         st.code(prompt_text, language="text")
