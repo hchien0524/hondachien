@@ -92,11 +92,13 @@ def render_capsule_ui():
             df_show['區間報酬(%)'] = ((df_show['最新股價'] - df_show['收盤價']) / df_show['收盤價']) * 100
             df_show['區間報酬(%)'] = df_show['區間報酬(%)'].round(2)
             
-            # 整理顯示欄位
-            cols = ['代號', '名稱', '當時收盤價(建倉成本)' if c=='收盤價' else c for c in df_show.columns]
+            # 整理顯示欄位 (已修復語法錯誤)
+            cols = ['當時收盤價(建倉成本)' if c=='收盤價' else c for c in df_show.columns]
             df_show.columns = cols
+            
             display_cols = ['代號', '名稱', '當時收盤價(建倉成本)', '最新股價', '區間報酬(%)', '總分', '戰術標籤']
-            display_df = df_show[display_cols]
+            available_cols = [c for c in display_cols if c in df_show.columns]
+            display_df = df_show[available_cols]
             
             st.success(f"✅ 成功載入 {selected_date} 的名單！以下是如果當時買進，抱到今天的真實績效：")
             
