@@ -4,10 +4,10 @@ import re
 import streamlit as st
 
 def parse_single_csv(file_obj):
-    """暴力解析單一 CSV 檔案 (自帶 X 光除錯雷達)"""
+    """暴力解析單一 CSV 檔案 (精準標題鎖定版)"""
     content = file_obj.read()
     
-    # 1. 破解編碼地雷 (加入 cp950 與 utf-16 備用)
+    # 1. 破解編碼地雷
     text = None
     for enc in ['utf-8-sig', 'big5', 'cp950', 'utf-16', 'utf-8']:
         try:
@@ -17,14 +17,15 @@ def parse_single_csv(file_obj):
             pass
             
     if not text:
-        st.error(f"❌ 檔案 {file_obj.name} 解碼徹底失敗！請確認這是一般的 CSV 檔。")
+        st.error(f"❌ 檔案 {file_obj.name} 解碼徹底失敗！")
         return pd.DataFrame()
             
-    # 2. 破解上櫃「廢話標題」地雷
+    # 2. 破解上櫃「廢話標題」地雷 (加入逗號判斷，避開第一行的"依股票代碼排序")
     lines = text.split('\n')
     header_idx = 0
     for i, line in enumerate(lines[:15]):
-        if '代號' in line or '代碼' in line or '名稱' in line or '證券代號' in line:
+        # 必須包含代號/代碼，且必須有逗號 (才是真正的 CSV 標題列)
+        if ('代號' in line or '代碼' in line or '證券代號' in line) and ',' in line:
             header_idx = i
             break
             
@@ -35,11 +36,7 @@ def parse_single_csv(file_obj):
     col_name = next((c for c in df.columns if '名稱' in c or '股名' in c), None)
     
     if not col_code:
-        st.warning(f"⚠️ 【X光雷達】檔案 {file_obj.name} 找不到代號欄位！\n目前抓到的欄位有：{df.columns.tolist()}")
         return pd.DataFrame()
-        
-    # 紀錄過濾前的代號，用來除錯
-    raw_codes = df[col_code].dropna().head(10).tolist()
         
     # 🔥 核彈級脫殼：清除代號裡面的 ="3293" 或 "3293" 或空白
     df[col_code] = df[col_code].astype(str).str.replace(r'["= ]', '', regex=True).str.strip()
@@ -48,7 +45,6 @@ def parse_single_csv(file_obj):
     df_filtered = df[df[col_code].str.match(r'^\d{4}$', na=False)]
     
     if df_filtered.empty:
-        st.warning(f"⚠️ 【X光雷達】檔案 {file_obj.name} 過濾 4 碼普通股後全軍覆沒！\n原始代號長這樣：{raw_codes}")
         return pd.DataFrame()
         
     df = df_filtered
