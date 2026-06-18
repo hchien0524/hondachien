@@ -2,27 +2,25 @@ import streamlit as st
 import pandas as pd
 from data_engine import clean_csv_data
 from strategy_core import calculate_scores
+from memory_module import render_memory_module  # 🧩 匯入全新的記憶模組
 
-st.set_page_config(page_title="HIOS Wave Radar V21", page_icon="🌊", layout="wide")
-st.title("🌊 HIOS Wave Radar V21 (模組化核心版)")
+st.set_page_config(page_title="HIOS Wave Radar V21.1", page_icon="🌊", layout="wide")
+st.title("🌊 HIOS Wave Radar V21.1 (混血大腦 + 記憶模組)")
 
+# --- 側邊欄：戰術參數與記憶模組 ---
 st.sidebar.header("⚙️ 戰術參數設定")
 min_trust_buy = st.sidebar.number_input("投信買超下限 (張)", value=100, step=50)
 max_bias = st.sidebar.number_input("MA20 乖離率上限 (%)", value=5.0, step=0.5)
 
-# --- API 直連區塊 ---
-st.subheader("🌐 1. 啟動全市場掃描 (API 直連)")
-if st.button("⚡️ 一鍵抓取最新籌碼 (API)"):
-    st.warning("⚠️ 雲端 IP 目前遭證交所防火牆阻擋。請使用下方的 CSV 備用方案！(未來將於 V21.5 導入第三方 API 解決此問題)")
+# 呼叫記憶模組 (顯示在側邊欄下方)
+render_memory_module()
 
-st.markdown("---")
-
-# --- CSV 備用區塊 ---
-st.subheader("📥 2. 匯入籌碼資料 (CSV 備用方案)")
+# --- 主畫面：掃描區塊 ---
+st.subheader("📥 匯入籌碼資料 (CSV 備用方案)")
 uploaded_files = st.file_uploader("請上傳三大法人買賣超 CSV 檔 (可同時拖曳上市與上櫃)", type="csv", accept_multiple_files=True)
 
 if uploaded_files:
-    if st.button("🚀 啟動 V21 模組化掃描"):
+    if st.button("🚀 啟動 V21.1 混血大腦掃描"):
         with st.spinner("啟動數據引擎清洗資料中..."):
             df_clean = clean_csv_data(uploaded_files)
             
