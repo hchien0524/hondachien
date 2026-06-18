@@ -99,17 +99,24 @@ def main():
             if not df_results.empty:
                 st.markdown(f"### 🎯 掃描完成！共篩選出 {len(df_results)} 檔 S 級真龍")
                 
-                # 顯示漸層表格 (若 matplotlib 沒裝好則降級顯示一般表格)
+                # 顯示漸層表格與精準數字格式 (UI 潔癖優化)
                 try:
-                    st.dataframe(
-                        df_results.style.background_gradient(cmap='RdYlGn_r', subset=['乖離率(%)'])
-                                        .background_gradient(cmap='YlGn', subset=['總分']),
-                        use_container_width=True, hide_index=True
-                    )
-                except:
+                    styled_df = df_results.style.format({
+                        "收盤價": "{:.2f}",
+                        "MA20": "{:.2f}",
+                        "乖離率(%)": "{:.2f}",
+                        "投信買賣超": "{:.0f}",  # 強制 0 位小數 (整數)
+                        "外資買賣超": "{:.0f}",  # 強制 0 位小數 (整數)
+                        "總分": "{:.2f}"
+                    }).background_gradient(cmap='RdYlGn_r', subset=['乖離率(%)']) \
+                      .background_gradient(cmap='YlGn', subset=['總分'])
+                      
+                    st.dataframe(styled_df, use_container_width=True, hide_index=True)
+                except Exception as e:
+                    # 若漸層渲染失敗，降級顯示一般表格
                     st.dataframe(df_results, use_container_width=True, hide_index=True)
 
-                # 儲存到時光膠囊
+                # 儲存到時光膠囊 (已補上 min_trust_buy, max_bias 參數)
                 save_capsule(df_results, strategy_mode, min_trust_buy, max_bias)
             else:
                 st.warning("⚠️ 在目前的嚴格濾網下，沒有股票符合條件。這代表目前盤勢可能不佳，建議保留現金。")
