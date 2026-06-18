@@ -1,176 +1,84 @@
 import pandas as pd
 import yfinance as yf
-import numpy as np
+import streamlit as st
+import concurrent.futures
 
-def calculate_scores(df_chips, min_trust, max_bias, strategy_mode="短波段突擊 (V21.1)"):
-    """雙大腦核心：支援短波段動能與大波段翻倍邏輯"""
-    df_filtered = df_chips[df_chips['投信買賣超'] >= min_trust].copy()
+def fetch_price_and_ma(code):
+    """抓取單檔股票收盤價與 MA20，自動判斷上市 (.TW) 或上櫃 (.TWO)"""
+    for suffix in ['.TW', '.TWO']:
+        try:
+            ticker = yf.Ticker(f"{code}{suffix}")
+            # 只抓取最近一個月的資料來計算 MA20，加快速度
+            hist = ticker.history(period="2mo")
+            if not hist.empty and len(hist) >= 20:
+                close = float(hist['Close'].iloc[-1])
+                ma20 = float(hist['Close'].rolling(window=20).mean().iloc[-1])
+                bias = ((close - ma20) / ma20) * 100
+                return round(close, 2), round(ma20, 2), round(bias, 2)
+        except:
+            continue
+    return None, None, None
+
+def calculate_scores(df, min_trust, max_bias, mode):
+    """
+    雙大腦評分邏輯核心
+    結合籌碼面 (投信/外資買超) 與 技術面 (MA20乖離率)
+    """
+    # 1. 初步濾網：投信買超必須大於設定下限
+    df_filtered = df[df['投信買賣超'] >= min_trust].copy()
+    
     if df_filtered.empty:
         return pd.DataFrame()
 
-    results = []
+    # 2. 抓取技術面資料 (使用多執行緒加速，極速獲取 MA20 與乖離率)
+    st.info(f"⚡ 啟動技術面雷達：正在為 {len(df_filtered)} 檔標的計算 MA20 與乖離率...")
     
-    for index, row in df_filtered.iterrows():
-        code = row['代號']
-        ticker = f"{code}.TW"
-        
-        try:
-            stock = yf.Ticker(ticker)
+    results = []
+    # 使用 10 個執行緒同時抓取 Yahoo Finance
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        future_to_code = {executor.submit(fetch_price_and_ma, row['代號']): row for _, row in df_filtered.iterrows()}
+        for future in concurrent.futures.as_completed(future_to_code):
+            row = future_to_code[future]
+            close, ma20, bias = future.result()
             
-            # ==========================================
-            # 🧠 大腦 A：短波段突擊模式 (V21.1 原有邏輯)
-            # ==========================================
-            if strategy_mode == "短波段突擊 (V21.1)":
-                hist = stock.history(period="1mo") 
-                if hist.empty:
-                    ticker = f"{code}.TWO"
-                    stock = yf.Ticker(ticker)
-                    hist = stock.history(period="1mo")
-                    
-                if len(hist) < 20: continue
-                    
-                close_price = hist['Close'].iloc[-1]
-                ma20 = hist['Close'].rolling(window=20).mean().iloc[-1]
-                bias_20 = ((close_price - ma20) / ma20) * 100
-                
-                if bias_20 > max_bias: continue
-                    
-                vol_today = hist['Volume'].iloc[-1] / 1000
-                ma5_vol = hist['Volume'].rolling(window=5).mean().iloc[-1] / 1000
-                
-                if vol_today < 300: continue
-                    
-                score = 0
-                tags = []
-                
-                chip_score = 0
-                if row['投信買賣超'] > 500: 
-                    chip_score += 30
-                    tags.append("重金鎖碼")
-                elif row['投信買賣超'] >= 100: 
-                    chip_score += 20
-                if row['外資買賣超'] > 0: 
-                    chip_score += 10
-                    tags.append("土洋齊買")
-                score += chip_score
-                
-                tech_score = 0
-                if 0 < bias_20 <= 5: 
-                    tech_score += 30
-                    tags.append("低乖離")
-                elif 5 < bias_20 <= 10: 
-                    tech_score += 15
-                score += tech_score
-                
-                vol_score = 0
-                if vol_today > ma5_vol * 1.1:
-                    vol_score += 15
-                    tags.append("溫和放量")
-                score += vol_score
-                
-                fund_score = 0
-                try:
-                    info = stock.info
-                    rev_growth = info.get('revenueGrowth', 0)
-                    gross_margin = info.get('grossMargins', 0)
-                    if rev_growth and rev_growth > 0.1: 
-                        fund_score += 10
-                        tags.append("營收雙位數成長")
-                    if gross_margin and gross_margin > 0.2: 
-                        fund_score += 5
-                        tags.append("高毛利")
-                except: pass
-                score += fund_score
-                
-                results.append({
-                    '代號': code, '名稱': row['名稱'], '收盤價': round(close_price, 2),
-                    '總分': score, '籌碼力': chip_score, '技術力': tech_score,
-                    '動能力': vol_score, '基本力': fund_score,
-                    '投信買賣超': row['投信買賣超'], '外資買賣超': row['外資買賣超'],
-                    '乖離率(%)': round(bias_20, 2), '今日量(張)': round(vol_today, 0),
-                    '戰術標籤': " | ".join(tags)
-                })
+            if close is not None:
+                row_dict = row.to_dict()
+                row_dict['收盤價'] = close
+                row_dict['MA20'] = ma20
+                row_dict['乖離率(%)'] = bias
+                results.append(row_dict)
 
-            # ==========================================
-            # 🧠 大腦 B：大波段翻倍模式 (全新長線邏輯)
-            # ==========================================
-            else:
-                hist = stock.history(period="6mo") 
-                if hist.empty:
-                    ticker = f"{code}.TWO"
-                    stock = yf.Ticker(ticker)
-                    hist = stock.history(period="6mo")
-                    
-                if len(hist) < 60: continue # 必須要有季線資料
-                    
-                close_price = hist['Close'].iloc[-1]
-                ma60 = hist['Close'].rolling(window=60).mean().iloc[-1]
-                low_6mo = hist['Low'].min()
-                
-                # 🛡️ 絕對防守線：必須站上季線 (MA60生命線)
-                if close_price < ma60: continue
-                    
-                # 計算底部漲幅 (距離半年最低點漲了多少)
-                rise_from_bottom = ((close_price - low_6mo) / low_6mo) * 100
-                
-                score = 0
-                tags = []
-                
-                # 1. 底部基期分數 (滿分 40) - 越接近底部越高分
-                base_score = 0
-                if rise_from_bottom <= 15:
-                    base_score += 40
-                    tags.append("大底剛突破")
-                elif rise_from_bottom <= 30:
-                    base_score += 25
-                    tags.append("底部起漲")
-                elif rise_from_bottom > 50:
-                    continue # 漲超過50%不追高，直接剔除！
-                score += base_score
-                
-                # 2. 基本面護城河 (滿分 40) - 長線極度看重
-                fund_score = 0
-                try:
-                    info = stock.info
-                    rev_growth = info.get('revenueGrowth', 0)
-                    gross_margin = info.get('grossMargins', 0)
-                    
-                    if rev_growth and rev_growth > 0.15: 
-                        fund_score += 20
-                        tags.append("營收大爆發")
-                    elif rev_growth and rev_growth > 0:
-                        fund_score += 10
-                        
-                    if gross_margin and gross_margin > 0.25: 
-                        fund_score += 20
-                        tags.append("極高毛利護城河")
-                    elif gross_margin and gross_margin > 0.15:
-                        fund_score += 10
-                except: pass
-                score += fund_score
-                
-                # 3. 籌碼安定度 (滿分 20)
-                chip_score = 0
-                if row['投信買賣超'] > 0 and row['外資買賣超'] > 0:
-                    chip_score += 20
-                    tags.append("長線土洋共識")
-                elif row['投信買賣超'] > 300:
-                    chip_score += 10
-                score += chip_score
-                
-                results.append({
-                    '代號': code, '名稱': row['名稱'], '收盤價': round(close_price, 2),
-                    '總分': score, '基期力': base_score, '基本力': fund_score,
-                    '籌碼力': chip_score, '底部漲幅(%)': round(rise_from_bottom, 2),
-                    '投信買賣超': row['投信買賣超'], '外資買賣超': row['外資買賣超'],
-                    '戰術標籤': " | ".join(tags)
-                })
-                
-        except Exception as e:
-            continue
-            
     if not results:
         return pd.DataFrame()
-        
-    df_results = pd.DataFrame(results)
-    return df_results.sort_values('總分', ascending=False)
+
+    df_tech = pd.DataFrame(results)
+
+    # 3. 風險控管：剔除乖離率過高的危險標的
+    df_tech = df_tech[df_tech['乖離率(%)'] <= max_bias].copy()
+
+    if df_tech.empty:
+        return pd.DataFrame()
+
+    # 4. 雙大腦評分邏輯
+    # 【短波突擊大腦】：重視籌碼爆發力 (投信與外資共鳴)
+    df_tech['短波分數'] = (df_tech['投信買賣超'] * 0.6) + (df_tech['外資買賣超'] * 0.4)
+    
+    # 【長線大底大腦】：重視低乖離與安全性 (乖離率越低，加分越多)
+    df_tech['長線分數'] = (df_tech['投信買賣超'] * 0.5) + ((max_bias - df_tech['乖離率(%)']) * 10)
+
+    # 根據總司令選擇的模式，決定最終總分
+    if mode == "短波突擊大腦":
+        df_tech['總分'] = df_tech['短波分數']
+    elif mode == "長線大底大腦":
+        df_tech['總分'] = df_tech['長線分數']
+    else: 
+        # 【雙大腦交集】：兼具爆發力與安全性
+        df_tech['總分'] = (df_tech['短波分數'] + df_tech['長線分數']) / 2
+
+    # 5. 排序與整理最終戰報
+    df_tech = df_tech.sort_values(by='總分', ascending=False).round(2)
+    
+    # 嚴格定義輸出的欄位順序，確保「乖離率(%)」絕對存在！
+    cols = ['代號', '名稱', '收盤價', 'MA20', '乖離率(%)', '投信買賣超', '外資買賣超', '總分']
+    
+    return df_tech[cols]
