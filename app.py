@@ -9,9 +9,9 @@ import re
 # ==========================================
 # 模組一：系統初始化與記憶體建構
 # ==========================================
-st.set_page_config(page_title="HIOS Wave Radar V20.1", layout="wide")
-st.title("🌊 HIOS Wave Radar V20.1 - 盤中緊急修復版")
-st.markdown("### 終極量化核心：API 直連 × 多維度絕對評分 × 記憶傳承系統")
+st.set_page_config(page_title="HIOS Wave Radar V20.2", layout="wide")
+st.title("🌊 HIOS Wave Radar V20.2 - 競技場修復版")
+st.markdown("### 終極量化核心：全樣本評分 × 多維度戰力分析")
 
 if 'scan_results' not in st.session_state: st.session_state['scan_results'] = pd.DataFrame()
 if 'portfolio' not in st.session_state: st.session_state['portfolio'] = []
@@ -58,7 +58,7 @@ def clean_number(val):
     except: return 0
 
 def parse_chip_csv(uploaded_file):
-    uploaded_file.seek(0) # 致命 Bug 修復：檔案指標歸零
+    uploaded_file.seek(0)
     raw_bytes = uploaded_file.read()
     decoded_text = None
     for enc in ['utf-8-sig', 'utf-8', 'cp950', 'big5']:
@@ -112,9 +112,8 @@ if data_source == "📁 手動 CSV 上傳 (備用)":
     uploaded_files = st.sidebar.file_uploader("📥 上傳籌碼 CSV", type="csv", accept_multiple_files=True)
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("🛡️ 初篩鐵門 (Pre-Filter)")
-min_trust_buy = st.sidebar.number_input("投信買超下限 (張)", value=100, step=50)
-max_bias = st.sidebar.number_input("MA20 乖離率上限 (%)", value=5.0, step=0.5)
+st.sidebar.subheader("🛡️ 評分門檻 (低於此分不顯示)")
+min_total_score = st.sidebar.number_input("總分下限", value=30, step=5)
 
 # ==========================================
 # 模組四：主程式與多維度評分引擎
@@ -122,7 +121,7 @@ max_bias = st.sidebar.number_input("MA20 乖離率上限 (%)", value=5.0, step=0
 tab1, tab2, tab3 = st.tabs(["🎯 戰情雷達 (掃描)", "⚔️ 策略競技場 (分析)", "🧠 記憶傳承 (存檔)"])
 
 with tab1:
-    if st.button("🚀 啟動 V20.1 終極掃描", type="primary"):
+    if st.button("🚀 啟動 V20.2 全樣本掃描", type="primary"):
         with st.spinner("系統運作中：正在獲取籌碼數據..."):
             df_master = pd.DataFrame()
             if data_source == "🌐 自動 API 直連 (推薦)":
@@ -133,7 +132,8 @@ with tab1:
             
             if df_master.empty: st.stop()
             
-            df_to_scan = df_master[(df_master['投信買賣超'] >= min_trust_buy) & (df_master['外資買賣超'] > -1000)]
+            # 移除嚴格初篩，只要有法人買賣就進入評分 (過濾掉完全沒動靜的死水股)
+            df_to_scan = df_master[(df_master['投信買賣超'] > 0) | (df_master['外資買賣超'] > 0)]
             if df_to_scan.empty:
                 st.warning("⚠️ 條件下無股票通過初篩。")
                 st.stop()
@@ -143,7 +143,7 @@ with tab1:
         status_text = st.empty()
         total_stocks = len(df_to_scan)
         
-        with st.spinner(f"啟動多維度評分引擎，正在深度掃描 {total_stocks} 檔標的..."):
+        with st.spinner(f"啟動多維度評分引擎，正在深度掃描 {total_stocks} 檔標的 (這可能需要幾分鐘)..."):
             for current_step, (idx, row) in enumerate(df_to_scan.iterrows()):
                 stock_code = str(row['代號']).strip()
                 market_type = row.get('市場', '上市')
@@ -171,29 +171,33 @@ with tab1:
                         
                         bias_20 = ((close_price - ma20) / ma20) * 100
                         
-                        if close_price > ma60 and bias_20 <= max_bias:
-                            score_chip, score_tech, score_fund = 0, 0, 0
-                            comments = []
-                            
-                            trust_amt = (row['投信買賣超'] * close_price) / 10
-                            if trust_amt > 50: score_chip += 20; comments.append("重金鎖碼")
-                            elif trust_amt > 20: score_chip += 10
-                            if row['外資買賣超'] > 0: score_chip += 10; comments.append("土洋齊買")
-                            if volume > 0 and (row['投信買賣超'] / volume) > 0.05: score_chip += 10; comments.append("高集中度")
-                            
-                            ma_max, ma_min = max(ma5, ma20, ma60), min(ma5, ma20, ma60)
-                            if (ma_max / ma_min) < 1.03: score_tech += 15; comments.append("均線糾結")
-                            if 0 < bias_20 < 3: score_tech += 10; comments.append("低乖離")
-                            if volume > (ma5_vol * 1.2): score_tech += 5; comments.append("溫和放量")
-                            
-                            info = ticker.info
-                            rev_growth = info.get('revenueGrowth', 0)
-                            if rev_growth and rev_growth > 0.1: score_fund += 15; comments.append("營收雙位數成長")
-                            elif rev_growth and rev_growth > 0: score_fund += 5
-                            if info.get('profitMargins', 0) > 0.1: score_fund += 15; comments.append("高毛利")
-                            
-                            total_score = score_chip + score_tech + score_fund
-                            
+                        score_chip, score_tech, score_fund = 0, 0, 0
+                        comments = []
+                        
+                        # 1. 籌碼力 (滿分 40)
+                        trust_amt = (row['投信買賣超'] * close_price) / 10
+                        if trust_amt > 50: score_chip += 20; comments.append("重金鎖碼")
+                        elif trust_amt > 20: score_chip += 10
+                        if row['外資買賣超'] > 0 and row['投信買賣超'] > 0: score_chip += 10; comments.append("土洋齊買")
+                        if volume > 0 and (row['投信買賣超'] / volume) > 0.05: score_chip += 10; comments.append("高集中度")
+                        
+                        # 2. 技術力 (滿分 30)
+                        ma_max, ma_min = max(ma5, ma20, ma60), min(ma5, ma20, ma60)
+                        if (ma_max / ma_min) < 1.03: score_tech += 15; comments.append("均線糾結")
+                        if 0 < bias_20 < 5: score_tech += 10; comments.append("低乖離")
+                        if volume > (ma5_vol * 1.2): score_tech += 5; comments.append("溫和放量")
+                        
+                        # 3. 基本力 (滿分 30)
+                        info = ticker.info
+                        rev_growth = info.get('revenueGrowth', 0)
+                        if rev_growth and rev_growth > 0.1: score_fund += 15; comments.append("營收雙位數成長")
+                        elif rev_growth and rev_growth > 0: score_fund += 5
+                        if info.get('profitMargins', 0) > 0.1: score_fund += 15; comments.append("高毛利")
+                        
+                        total_score = score_chip + score_tech + score_fund
+                        
+                        # 只保留總分大於門檻的股票
+                        if total_score >= min_total_score:
                             results.append({
                                 '代號': stock_code, '名稱': row['名稱'], '收盤價': round(close_price, 2),
                                 '總分': total_score, '籌碼力(40)': score_chip, '技術力(30)': score_tech, '基本力(30)': score_fund,
@@ -231,13 +235,15 @@ with tab2:
         col1, col2, col3 = st.columns(3)
         with col1:
             st.markdown("#### 💰 籌碼霸主")
-            st.dataframe(df_arena.sort_values('籌碼力(40)', ascending=False)[['代號', '名稱', '籌碼力(40)', '系統短評']].head(3))
+            st.dataframe(df_arena.sort_values('籌碼力(40)', ascending=False)[['代號', '名稱', '籌碼力(40)', '系統短評']].head(5))
         with col2:
             st.markdown("#### 📈 技術型態王")
-            st.dataframe(df_arena.sort_values('技術力(30)', ascending=False)[['代號', '名稱', '技術力(30)', '系統短評']].head(3))
+            st.dataframe(df_arena.sort_values('技術力(30)', ascending=False)[['代號', '名稱', '技術力(30)', '系統短評']].head(5))
         with col3:
             st.markdown("#### 🏢 基本面護體")
-            st.dataframe(df_arena.sort_values('基本力(30)', ascending=False)[['代號', '名稱', '基本力(30)', '系統短評']].head(3))
+            st.dataframe(df_arena.sort_values('基本力(30)', ascending=False)[['代號', '名稱', '基本力(30)', '系統短評']].head(5))
+    else:
+        st.info("💡 請先在「戰情雷達」執行掃描，競技場才能為您分析戰力！")
 
 # ==========================================
 # 模組六：記憶傳承系統
