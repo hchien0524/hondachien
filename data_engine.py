@@ -6,13 +6,12 @@ def parse_chip_csv(uploaded_file):
     """
     負責解析台灣證交所與櫃買中心的三大法人 CSV 檔案
     終極修復版：強制 cp950 解碼並忽略壞字，徹底解決亂碼與找不到表頭問題
+    V23.1 更新：排除 0 開頭 ETF，精準抓取外陸資欄位
     """
     try:
         content = uploaded_file.read()
         
-        # 1. 終極解碼防護網 (關鍵修復)
-        # 台灣官方 CSV 使用 Windows-1250 / cp950 編碼。
-        # 使用 errors='ignore' 避免遇到特殊字元(如「碁」)時整個崩潰變成亂碼
+        # 1. 終極解碼防護網
         try:
             text = content.decode('cp950', errors='ignore')
         except Exception:
@@ -54,15 +53,15 @@ def parse_chip_csv(uploaded_file):
             st.error(f"檔案 {uploaded_file.name} 欄位清洗後仍找不到「代號」！")
             return None
             
-        # 5. 絕對鐵門：只保留 4 碼純數字的普通股
+        # 5. 絕對鐵門：只保留 4 碼純數字的普通股 (排除 0 開頭的 ETF，如 0050)
         df['代號'] = df['代號'].astype(str).str.replace('=', '').str.replace('"', '').str.strip()
-        df = df[df['代號'].str.match(r'^\d{4}$')]
+        df = df[df['代號'].str.match(r'^[1-9]\d{3}$')]
         
-        # 6. 智慧尋標：尋找投信與外資買賣超欄位
+        # 6. 智慧尋標：尋找投信與外資買賣超欄位 (加入「外陸資」防呆)
         trust_col = next((c for c in df.columns if '投信' in c and '買賣超' in c), None)
-        foreign_col = next((c for c in df.columns if '外資' in c and '買賣超' in c and '不含' not in c), None)
+        foreign_col = next((c for c in df.columns if ('外資' in c or '外陸資' in c) and '買賣超' in c and '不含' not in c), None)
         if not foreign_col: 
-            foreign_col = next((c for c in df.columns if '外資' in c and '買賣超' in c), None)
+            foreign_col = next((c for c in df.columns if ('外資' in c or '外陸資' in c) and '買賣超' in c), None)
         
         # 7. 建立標準化 DataFrame 輸出
         df_clean = pd.DataFrame()
