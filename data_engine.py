@@ -59,7 +59,7 @@ def parse_chip_csv(uploaded_file):
         
         # 6. 智慧尋標：尋找投信與外資買賣超欄位 (加入「外陸資」防呆)
         trust_col = next((c for c in df.columns if '投信' in c and '買賣超' in c), None)
-        foreign_col = next((c for c in df.columns if ('外資' in c or '外陸資' in c) and '買賣超' in c and '不含' not in c), None)
+        foreign_col = next((c for c in df.columns if ('外資' in c or '外陸資' in c) and '買賣超' in c and '不含'  in c), None)
         if not foreign_col: 
             foreign_col = next((c for c in df.columns if ('外資' in c or '外陸資' in c) and '買賣超' in c), None)
         
