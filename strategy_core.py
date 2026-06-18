@@ -81,7 +81,14 @@ def calculate_scores(df, min_trust, max_bias, mode):
         df_tech['總分'] = (df_tech['短波分數'] + df_tech['長線分數']) / 2
 
     # 5. 排序與整理最終戰報
-    df_tech = df_tech.sort_values(by='總分', ascending=False).round(2)
+    df_tech = df_tech.sort_values(by='總分', ascending=False)
+    
+    # 【UI 潔癖優化】：將買賣超張數強制轉為「整數」，去除煩人的小數點與 0
+    df_tech['投信買賣超'] = df_tech['投信買賣超'].astype(int)
+    df_tech['外資買賣超'] = df_tech['外資買賣超'].astype(int)
+    
+    # 其他技術指標與分數，嚴格四捨五入到小數點後 2 位
+    df_tech = df_tech.round(2)
     
     # 嚴格定義輸出的欄位順序
     cols = ['代號', '名稱', '收盤價', 'MA20', '乖離率(%)', '投信買賣超', '外資買賣超', '總分']
