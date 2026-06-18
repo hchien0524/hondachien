@@ -110,7 +110,7 @@ def main():
                     st.dataframe(df_results, use_container_width=True, hide_index=True)
 
                 # 儲存到時光膠囊
-                save_capsule(df_results, strategy_mode)
+                save_capsule(df_results, strategy_mode, min_trust_buy, max_bias)
             else:
                 st.warning("⚠️ 在目前的嚴格濾網下，沒有股票符合條件。這代表目前盤勢可能不佳，建議保留現金。")
 
