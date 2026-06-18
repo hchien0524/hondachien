@@ -3,92 +3,71 @@ import io
 import re
 import streamlit as st
 
-def parse_single_csv(file_obj):
-    """暴力解析單一 CSV 檔案 (精準標題鎖定版)"""
-    content = file_obj.read()
-    
-    # 1. 破解編碼地雷
-    text = None
-    for enc in ['utf-8-sig', 'big5', 'cp950', 'utf-16', 'utf-8']:
+def parse_chip_csv(uploaded_file):
+    """
+    負責解析台灣證交所與櫃買中心的三大法人 CSV 檔案
+    具備 Big5/UTF-8 自動解碼、垃圾表頭過濾、4碼普通股純化功能
+    """
+    try:
+        content = uploaded_file.read()
+        
+        # 1. 終極解碼防護網 (先試 Big5，再試 UTF-8)
         try:
-            text = content.decode(enc)
-            break
-        except:
-            pass
+            text = content.decode('big5')
+        except UnicodeDecodeError:
+            text = content.decode('utf-8', errors='replace')
+        
+        lines = text.split('\n')
+        
+        # 2. 智慧尋找真實表頭 (跳過官方的垃圾說明文字)
+        header_idx = 0
+        for i, line in enumerate(lines):
+            if '代號' in line or '代碼' in line:
+                header_idx = i
+                break
+                
+        # 3. 讀取 CSV
+        df = pd.read_csv(io.StringIO(text), skiprows=header_idx)
+        
+        # 4. 清洗欄位名稱 (去除隱形空白與換行符號)
+        df.columns = df.columns.str.strip().str.replace('\r', '').str.replace('\n', '')
+        
+        # 確保有代號欄位
+        if '代號' not in df.columns:
+            for col in df.columns:
+                if '代號' in col or '代碼' in col:
+                    df.rename(columns={col: '代號'}, inplace=True)
+                    break
+        
+        if '代號' not in df.columns:
+            st.error(f"檔案 {uploaded_file.name} 找不到「代號」欄位！")
+            return None
             
-    if not text:
-        st.error(f"❌ 檔案 {file_obj.name} 解碼徹底失敗！")
-        return pd.DataFrame()
-            
-    # 2. 破解上櫃「廢話標題」地雷 (加入逗號判斷，避開第一行的"依股票代碼排序")
-    lines = text.split('\n')
-    header_idx = 0
-    for i, line in enumerate(lines[:15]):
-        # 必須包含代號/代碼，且必須有逗號 (才是真正的 CSV 標題列)
-        if ('代號' in line or '代碼' in line or '證券代號' in line) and ',' in line:
-            header_idx = i
-            break
-            
-    df = pd.read_csv(io.StringIO(text), skiprows=header_idx, dtype=str, on_bad_lines='skip')
-    df.columns = [str(c).replace('"', '').replace(' ', '').strip() for c in df.columns]
-    
-    col_code = next((c for c in df.columns if '代號' in c or '代碼' in c), None)
-    col_name = next((c for c in df.columns if '名稱' in c or '股名' in c), None)
-    
-    if not col_code:
-        return pd.DataFrame()
+        # 5. 絕對鐵門：只保留 4 碼純數字的普通股 (過濾權證、ETF、牛熊證)
+        df['代號'] = df['代號'].astype(str).str.replace('"', '').str.strip()
+        df = df[df['代號'].str.match(r'^\d{4}$')]
         
-    # 🔥 核彈級脫殼：清除代號裡面的 ="3293" 或 "3293" 或空白
-    df[col_code] = df[col_code].astype(str).str.replace(r'["= ]', '', regex=True).str.strip()
-    
-    # 絕對鐵門：只保留 4 碼純血普通股
-    df_filtered = df[df[col_code].str.match(r'^\d{4}$', na=False)]
-    
-    if df_filtered.empty:
-        return pd.DataFrame()
+        # 6. 智慧尋標：尋找投信與外資買賣超欄位
+        trust_col = next((c for c in df.columns if '投信' in c and '買賣超' in c), None)
+        # 外資欄位優先找「外資及陸資-買賣超」，避開只算自營商的
+        foreign_col = next((c for c in df.columns if '外資' in c and '買賣超' in c and '不含' not in c), None)
+        if not foreign_col: 
+            foreign_col = next((c for c in df.columns if '外資' in c and '買賣超' in c), None)
         
-    df = df_filtered
-    
-    # 尋找投信與外資
-    col_it = next((c for c in df.columns if '投信' in c and '買賣超' in c), None)
-    col_fi = None
-    for c in df.columns:
-        if '外資及陸資-買賣超' in c or '外陸資買賣超' in c:
-            col_fi = c
-            break
-    if not col_fi:
-        col_fi = next((c for c in df.columns if '外資' in c and '買賣超' in c), None)
+        # 7. 建立標準化 DataFrame 輸出
+        df_clean = pd.DataFrame()
+        df_clean['代號'] = df['代號']
+        df_clean['名稱'] = df['名稱'].astype(str).str.replace('"', '').str.strip() if '名稱' in df.columns else "未知"
         
-    res = pd.DataFrame()
-    res['代號'] = df[col_code]
-    res['名稱'] = df[col_name] if col_name else "未知"
-    
-    def clean_num(x):
-        if pd.isna(x): return 0
-        s = str(x).replace(',', '').replace('"', '').strip()
-        try: return float(s)
-        except: return 0
+        # 轉換數字並換算成「張」 (除以 1000)
+        def to_sheets(series):
+            return pd.to_numeric(series.astype(str).str.replace(',', '').str.strip(), errors='coerce').fillna(0) / 1000
         
-    res['投信買賣超'] = df[col_it].apply(clean_num) if col_it else 0
-    res['外資買賣超'] = df[col_fi].apply(clean_num) if col_fi else 0
-    
-    if res['投信買賣超'].abs().max() > 10000 or res['外資買賣超'].abs().max() > 10000:
-        res['投信買賣超'] = res['投信買賣超'] / 1000
-        res['外資買賣超'] = res['外資買賣超'] / 1000
+        df_clean['投信買賣超'] = to_sheets(df[trust_col]) if trust_col else 0.0
+        df_clean['外資買賣超'] = to_sheets(df[foreign_col]) if foreign_col else 0.0
         
-    return res
-
-def clean_csv_data(uploaded_files):
-    dfs = []
-    for f in uploaded_files:
-        f.seek(0)
-        df = parse_single_csv(f)
-        if not df.empty:
-            dfs.append(df)
-            
-    if not dfs:
-        return pd.DataFrame()
-    
-    final_df = pd.concat(dfs, ignore_index=True)
-    final_df = final_df.drop_duplicates(subset=['代號'], keep='last')
-    return final_df
+        return df_clean
+        
+    except Exception as e:
+        st.error(f"解析檔案 {uploaded_file.name} 時發生未預期錯誤: {e}")
+        return None
