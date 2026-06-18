@@ -23,10 +23,44 @@ def render_portfolio_monitor():
     st.header("🛡️ V24 持股監控中心")
     st.caption("自動追蹤您的陣地，計算動態均線防守價，並比對今日最新籌碼。")
     
+    # 初始化 session_state
+    if 'portfolio' not in st.session_state:
+        st.session_state['portfolio'] = []
+
+    # ==========================================
+    # ➕ 手動新增持股區塊 (V24.1 全新功能)
+    # ==========================================
+    with st.expander("➕ 手動新增持股 (非雷達選股也能監控)", expanded=True):
+        col_add1, col_add2, col_add3 = st.columns([2, 2, 1])
+        with col_add1:
+            new_code = st.text_input("股票代號 (例如: 2458)", key="new_stock_code")
+        with col_add2:
+            new_cost = st.number_input("建倉成本", min_value=0.0, value=0.0, step=0.5, key="new_stock_cost")
+        with col_add3:
+            st.markdown("  
+", unsafe_allow_html=True) # 排版對齊
+            if st.button("加入監控", type="primary", use_container_width=True):
+                if new_code:
+                    # 檢查是否已存在
+                    exists = any(str(item.get('代號', '')) == str(new_code) for item in st.session_state['portfolio'])
+                    if exists:
+                        st.warning(f"⚠️ {new_code} 已經在監控名單中了！")
+                    else:
+                        st.session_state['portfolio'].append({
+                            "代號": new_code,
+                            "名稱": f"自選股",
+                            "建倉價": new_cost,
+                            "收盤價": new_cost
+                        })
+                        st.success(f"✅ 成功加入 {new_code}！")
+                        st.rerun() # 強制刷新畫面
+                else:
+                    st.warning("請輸入股票代號！")
+
     # 讀取時光膠囊中的持股
     portfolio = st.session_state.get('portfolio', [])
     if not portfolio:
-        st.info("💡 目前沒有持股紀錄。請先在「雷達掃描室」將標的加入時光膠囊，或從側邊欄匯入戰情包。")
+        st.info("💡 目前沒有持股紀錄。請在上方手動新增，或從側邊欄匯入戰情包。")
         return
         
     # 讀取今天最新上傳的 CSV 籌碼 (由雷達室傳遞過來)
@@ -38,23 +72,26 @@ def render_portfolio_monitor():
     for idx, item in enumerate(items):
         code = str(item.get('代號', ''))
         name = item.get('名稱', f'股票 {code}')
-        # 預設成本為當時存入的收盤價
         default_cost = float(item.get('收盤價', item.get('建倉價', 0.0)))
         
         st.markdown("---")
-        col1, col2, col3 = st.columns([1, 1.5, 1.5])
+        # 加入 col4 用來放刪除按鈕
+        col1, col2, col3, col4 = st.columns([1.2, 1.5, 1.5, 0.5])
         
         # 抓取最新技術面
         close, ma5, ma10, ma20 = get_stock_tech(code)
         
         with col1:
             st.subheader(f"[{code}] {name}")
-            # 讓總司令可以手動微調真實成本價
             cost = st.number_input(f"建倉成本", value=default_cost, step=0.5, key=f"cost_{code}_{idx}")
+            
+            # 更新 session_state 裡的成本價 (讓系統記住您的修改)
+            if cost != default_cost:
+                st.session_state['portfolio'][idx]['建倉價'] = cost
+                st.session_state['portfolio'][idx]['收盤價'] = cost
             
             if close is not None:
                 ret_pct = ((close - cost) / cost * 100) if cost > 0 else 0
-                # 台股紅漲綠跌
                 ret_color = "#ff3333" if ret_pct > 0 else "#00cc66" 
                 ret_sign = "+" if ret_pct > 0 else ""
                 
@@ -64,6 +101,10 @@ def render_portfolio_monitor():
                 st.warning("連線中或無報價...")
 
         if close is None:
+            with col4:
+                if st.button("❌ 刪除", key=f"del_none_{code}_{idx}"):
+                    st.session_state['portfolio'].pop(idx)
+                    st.rerun()
             continue
 
         # 籌碼資料比對
@@ -103,3 +144,11 @@ def render_portfolio_monitor():
                 
             if trust_buy < 0:
                 st.error(f"⚠️ **籌碼警報**: 投信今日賣超 {trust_buy} 張，請密切注意主力結帳風險！")
+                
+        with col4:
+            st.markdown("  
+  
+", unsafe_allow_html=True)
+            if st.button("❌ 刪除", key=f"del_{code}_{idx}"):
+                st.session_state['portfolio'].pop(idx)
+                st.rerun()
