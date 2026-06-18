@@ -9,10 +9,11 @@ import re
 # ==========================================
 # 模組一：系統初始化與記憶體建構
 # ==========================================
-st.set_page_config(page_title="HIOS Wave Radar V20.2", layout="wide")
-st.title("🌊 HIOS Wave Radar V20.2 - 競技場修復版")
+st.set_page_config(page_title="HIOS Wave Radar V20.3", layout="wide")
+st.title("🌊 HIOS Wave Radar V20.3 - 絕對防彈版")
 st.markdown("### 終極量化核心：全樣本評分 × 多維度戰力分析")
 
+# 安全初始化
 if 'scan_results' not in st.session_state: st.session_state['scan_results'] = pd.DataFrame()
 if 'portfolio' not in st.session_state: st.session_state['portfolio'] = []
 
@@ -121,7 +122,7 @@ min_total_score = st.sidebar.number_input("總分下限", value=30, step=5)
 tab1, tab2, tab3 = st.tabs(["🎯 戰情雷達 (掃描)", "⚔️ 策略競技場 (分析)", "🧠 記憶傳承 (存檔)"])
 
 with tab1:
-    if st.button("🚀 啟動 V20.2 全樣本掃描", type="primary"):
+    if st.button("🚀 啟動 V20.3 全樣本掃描", type="primary"):
         with st.spinner("系統運作中：正在獲取籌碼數據..."):
             df_master = pd.DataFrame()
             if data_source == "🌐 自動 API 直連 (推薦)":
@@ -132,7 +133,6 @@ with tab1:
             
             if df_master.empty: st.stop()
             
-            # 移除嚴格初篩，只要有法人買賣就進入評分 (過濾掉完全沒動靜的死水股)
             df_to_scan = df_master[(df_master['投信買賣超'] > 0) | (df_master['外資買賣超'] > 0)]
             if df_to_scan.empty:
                 st.warning("⚠️ 條件下無股票通過初篩。")
@@ -174,20 +174,17 @@ with tab1:
                         score_chip, score_tech, score_fund = 0, 0, 0
                         comments = []
                         
-                        # 1. 籌碼力 (滿分 40)
                         trust_amt = (row['投信買賣超'] * close_price) / 10
                         if trust_amt > 50: score_chip += 20; comments.append("重金鎖碼")
                         elif trust_amt > 20: score_chip += 10
                         if row['外資買賣超'] > 0 and row['投信買賣超'] > 0: score_chip += 10; comments.append("土洋齊買")
                         if volume > 0 and (row['投信買賣超'] / volume) > 0.05: score_chip += 10; comments.append("高集中度")
                         
-                        # 2. 技術力 (滿分 30)
                         ma_max, ma_min = max(ma5, ma20, ma60), min(ma5, ma20, ma60)
                         if (ma_max / ma_min) < 1.03: score_tech += 15; comments.append("均線糾結")
                         if 0 < bias_20 < 5: score_tech += 10; comments.append("低乖離")
                         if volume > (ma5_vol * 1.2): score_tech += 5; comments.append("溫和放量")
                         
-                        # 3. 基本力 (滿分 30)
                         info = ticker.info
                         rev_growth = info.get('revenueGrowth', 0)
                         if rev_growth and rev_growth > 0.1: score_fund += 15; comments.append("營收雙位數成長")
@@ -196,7 +193,6 @@ with tab1:
                         
                         total_score = score_chip + score_tech + score_fund
                         
-                        # 只保留總分大於門檻的股票
                         if total_score >= min_total_score:
                             results.append({
                                 '代號': stock_code, '名稱': row['名稱'], '收盤價': round(close_price, 2),
@@ -221,17 +217,19 @@ with tab1:
         else:
             st.warning("⚠️ 未掃描到符合條件的標的。")
 
-    if not st.session_state['scan_results'].empty:
+    current_scan = st.session_state.get('scan_results', pd.DataFrame())
+    if not current_scan.empty:
         st.markdown("### 🎯 最新鎖定名單")
-        st.dataframe(st.session_state['scan_results'])
+        st.dataframe(current_scan)
 
 # ==========================================
 # 模組五：策略競技場
 # ==========================================
 with tab2:
     st.markdown("### ⚔️ 策略競技場：多維度戰力分析")
-    if not st.session_state['scan_results'].empty:
-        df_arena = st.session_state['scan_results']
+    current_scan = st.session_state.get('scan_results', pd.DataFrame())
+    if not current_scan.empty:
+        df_arena = current_scan
         col1, col2, col3 = st.columns(3)
         with col1:
             st.markdown("#### 💰 籌碼霸主")
@@ -254,18 +252,25 @@ with tab3:
     with col_a:
         st.markdown("#### 🛡️ 我的陣地 (持股備忘錄)")
         new_stock = st.text_input("新增持股 (例如：國產 33.8)")
-        if st.button("➕ 加入陣地") and new_stock: st.session_state['portfolio'].append(new_stock)
-        if st.session_state['portfolio']:
-            for item in st.session_state['portfolio']: st.markdown(f"- 🎯 {item}")
+        if st.button("➕ 加入陣地") and new_stock: 
+            if 'portfolio' not in st.session_state: st.session_state['portfolio'] = []
+            st.session_state['portfolio'].append(new_stock)
+            
+        current_portfolio = st.session_state.get('portfolio', [])
+        if current_portfolio:
+            for item in current_portfolio: st.markdown(f"- 🎯 {item}")
             if st.button("🗑️ 清空陣地"): st.session_state['portfolio'] = []
             
     with col_b:
         st.markdown("#### 🤖 一鍵喚醒 Manus 銜接碼")
+        current_portfolio = st.session_state.get('portfolio', [])
         prompt_text = f"Manus，我是指揮官。這是 V20 系統的記憶包。\n"
-        prompt_text += f"【目前持股陣地】：{', '.join(st.session_state['portfolio']) if st.session_state['portfolio'] else '空手'}\n"
+        prompt_text += f"【目前持股陣地】：{', '.join(current_portfolio) if current_portfolio else '空手'}\n"
         prompt_text += f"【最新掃描名單 (前5名)】：\n"
-        if not st.session_state['scan_results'].empty:
-            prompt_text += st.session_state['scan_results'].head(5)[['代號', '名稱', '總分', '系統短評']].to_string(index=False)
+        
+        current_scan = st.session_state.get('scan_results', pd.DataFrame())
+        if not current_scan.empty:
+            prompt_text += current_scan.head(5)[['代號', '名稱', '總分', '系統短評']].to_string(index=False)
         else: prompt_text += "無最新名單\n"
         prompt_text += "\n請讀取以上記憶，並接續我們的戰術，為我分析今日的 100 萬資金動作。"
         st.code(prompt_text, language="text")
