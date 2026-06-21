@@ -1,6 +1,21 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import requests
+
+@st.cache_data(ttl=86400)
+def fetch_stock_name(code):
+    """備援：從 FinMind 抓取真實股名"""
+    try:
+        url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInfo&data_id={code}"
+        res = requests.get(url, timeout=3 )
+        if res.status_code == 200:
+            data = res.json().get('data', [])
+            if len(data) > 0:
+                return data[0].get('stock_name', '')
+    except:
+        pass
+    return f"股票 {code}"
 
 @st.cache_data(ttl=300)
 def get_stock_tech(code):
@@ -44,7 +59,7 @@ def render_portfolio_monitor():
                     else:
                         st.session_state['portfolio'].append({
                             "代號": new_code,
-                            "名稱": "自選股",
+                            "名稱": "", # 留空讓下方邏輯自動抓取
                             "建倉價": new_cost,
                             "收盤價": new_cost
                         })
@@ -68,11 +83,23 @@ def render_portfolio_monitor():
     
     chip_df = st.session_state.get('latest_chip_data', pd.DataFrame())
 
-    with st.spinner("📡 正在與交易所連線，同步最新防守線..."):
+    with st.spinner("📡 正在與交易所連線，同步最新防守線與股名..."):
         for item in portfolio:
             code = str(item.get('代號', ''))
-            name = item.get('名稱', f'股票 {code}')
+            name = item.get('名稱', '')
             cost = float(item.get('建倉價', item.get('收盤價', 0.0)))
+            
+            # 【新增】自動正名邏輯 (解決只有代號沒有股名的問題)
+            if not name or name == '自選股' or name.startswith('股票'):
+                found = False
+                if not chip_df.empty and '代號' in chip_df.columns:
+                    match = chip_df[chip_df['代號'] == code]
+                    if not match.empty and '名稱' in match.columns:
+                        name = str(match['名稱'].iloc[0])
+                        found = True
+                if not found:
+                    name = fetch_stock_name(code)
+                item['名稱'] = name # 更新回 session_state 讓他永遠記住
             
             close, ma5, ma10, ma20 = get_stock_tech(code)
             
@@ -85,11 +112,10 @@ def render_portfolio_monitor():
                 continue
                 
             ret_pct = ((close - cost) / cost * 100) if cost > 0 else 0
-            # 簡單權重計算總報酬率
             total_cost_amt += cost 
             total_value_amt += close
             
-            # 🚨 狀態判定 (分數越高越危險，用來置頂排序)
+            # 🚨 狀態判定
             if close < ma10:
                 status_score = 3
                 status_text = "🔴 破線撤退 (跌破10MA)"
