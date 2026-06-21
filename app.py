@@ -4,7 +4,7 @@ import json
 
 # 匯入模組 (加入全新的 state_manager)
 try:
-    from engine import parse_chip_csv  # 確保這裡對應您的 engine.py 或 data_engine.py
+    from data_engine import parse_chip_csv  # 確保這裡對應您的 engine.py 或 data_engine.py
     from strategy_core import calculate_scores
     from time_capsule import save_capsule, render_capsule_ui
     from market_filter import render_market_dashboard
