@@ -161,4 +161,14 @@ def main():
                         m3.metric("平均區間報酬", f"{avg_return:.2f} %")
                         
                         st.markdown("### 📜 逐筆交易明細")
-                        styled_bt = df_bt_results
+                        styled_bt = df_bt_results.style.format({
+                            "乖離率(%)": "{:.2f}", "進場價(隔日開盤)": "{:.2f}", "出場價": "{:.2f}", 
+                            "最大漲幅(%)": "{:.2f}", "區間報酬(%)": "{:.2f}"
+                        }).background_gradient(cmap='RdYlGn', subset=['區間報酬(%)'])
+                        
+                        st.dataframe(styled_bt, use_container_width=True, hide_index=True)
+                    else:
+                        st.warning("該日沒有符合條件的股票，或歷史股價抓取失敗。")
+
+if __name__ == "__main__":
+    main()
