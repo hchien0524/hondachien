@@ -1,15 +1,55 @@
 import pandas as pd
+import yfinance as yf
+import streamlit as st
 import concurrent.futures
 import requests
 from datetime import datetime, timedelta
-import streamlit as st
-import time
-import yfinance as yf
 
-# ==========================================
-# 引擎一：yfinance 負責股價與 MA20
-# ==========================================
-def fetch_yfinance_data(code):
+def fetch_finmind_data(code, trust_buy_today, token=""):
+    """抓取 FinMind 籌碼數據，計算動能比例與連買天數"""
+    momentum_pct = 0.0
+    continuous_days = 0
+    
+    try:
+        end_date = datetime.now()
+        start_date = (end_date - timedelta(days=30)).strftime("%Y-%m-%d")
+        end_date_str = end_date.strftime("%Y-%m-%d")
+        
+        headers = {'Authorization': f'Bearer {token}'} if token else {}
+        
+        # 1. 抓取投信買賣超 (算連買天數)
+        chip_url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInstitutionalInvestorsBuySell&data_id={code}&start_date={start_date}&end_date={end_date_str}"
+        res_chip = requests.get(chip_url, headers=headers, timeout=5 )
+        if res_chip.status_code == 200:
+            chip_data = res_chip.json()
+            if len(chip_data.get('data', [])) > 0:
+                df_chip = pd.DataFrame(chip_data['data'])
+                df_trust = df_chip[df_chip['name'] == '投信'].copy()
+                if not df_trust.empty:
+                    df_trust = df_trust.sort_values('date', ascending=False)
+                    for val in df_trust['buy'] - df_trust['sell']:
+                        if val > 0:
+                            continuous_days += 1
+                        else:
+                            break
+                            
+        # 2. 抓取股本 (算動能比例)
+        info_url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInfo&data_id={code}"
+        res_info = requests.get(info_url, headers=headers, timeout=5 )
+        if res_info.status_code == 200:
+            info_data = res_info.json()
+            if len(info_data.get('data', [])) > 0:
+                shares_outstanding = info_data['data'][0].get('IssuedShares', 0)
+                if shares_outstanding > 0:
+                    momentum_pct = round((trust_buy_today * 1000 / shares_outstanding) * 100, 2)
+                    
+    except Exception:
+        pass
+        
+    return momentum_pct, continuous_days
+
+def fetch_price_and_ma(code):
+    """抓取收盤價與 MA20"""
     for suffix in ['.TW', '.TWO']:
         try:
             tkr = yf.Ticker(f"{code}{suffix}")
@@ -23,165 +63,92 @@ def fetch_yfinance_data(code):
             continue
     return None, None, None
 
-# ==========================================
-# 引擎二：FinMind (籌碼) + yfinance (股本) 極限省水版
-# ==========================================
-@st.cache_data(ttl=43200, show_spinner=False)
-def fetch_finmind_cached_v3(code, token):
-    """V3: 股本改用 yfinance 查詢，FinMind 額度消耗減半！"""
-    token_str = f"&token={token}" if token else ""
-    end_date = datetime.now()
-    start_date = (end_date - timedelta(days=45)).strftime('%Y-%m-%d')
+def process_stock(row, token):
+    """單檔股票處理流"""
+    code = row['代號']
+    trust_buy = row['投信買賣超']
     
-    recent_20_buy = 0
-    consecutive_buy_hist = 0
-    latest_date = ""
-    total_shares = 0
+    close, ma20, bias = fetch_price_and_ma(code)
+    if close is None:
+        return None
+        
+    mom_pct, days = fetch_finmind_data(code, trust_buy, token)
     
-    try:
-        # 1. 抓取投信籌碼 (消耗 1 次 FinMind 額度)
-        chip_url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInstitutionalInvestorsBuySell&data_id={code}&start_date={start_date}{token_str}"
-        res_chip = requests.get(chip_url, timeout=5 )
-        if res_chip.status_code == 200:
-            chip_data = res_chip.json()
-            if chip_data.get('data'):
-                df_chip = pd.DataFrame(chip_data['data'])
-                df_trust = df_chip[df_chip['name'] == '投信'].copy()
-                if not df_trust.empty:
-                    df_trust['buy_sell'] = df_trust.get('buy', 0) - df_trust.get('sell', 0)
-                    df_trust = df_trust.sort_values('date', ascending=False)
-                    latest_date = df_trust['date'].iloc[0]
-                    
-                    for val in df_trust['buy_sell']:
-                        if val > 0:
-                            consecutive_buy_hist += 1
-                        else:
-                            break
-                    recent_20_buy = df_trust.head(20)['buy_sell'].sum()
-
-        # 2. 抓取發行股數 (改用 yfinance 極速查詢，消耗 0 次 FinMind 額度！)
+    # yfinance 股本備援機制 (若 FinMind 沒抓到)
+    if mom_pct == 0:
         try:
             tkr = yf.Ticker(f"{code}.TW")
-            total_shares = tkr.fast_info.get('shares')
-            if not total_shares:
+            shares = tkr.info.get('sharesOutstanding', 0)
+            if shares == 0:
                 tkr = yf.Ticker(f"{code}.TWO")
-                total_shares = tkr.fast_info.get('shares')
+                shares = tkr.info.get('sharesOutstanding', 0)
+            if shares > 0:
+                mom_pct = round((trust_buy * 1000 / shares) * 100, 2)
         except:
-            total_shares = 0
-                
-    except Exception as e:
-        pass
-        
-    time.sleep(0.2) 
-    return recent_20_buy, consecutive_buy_hist, latest_date, total_shares
+            pass
 
-def calculate_scores(df, min_trust, max_bias, finmind_token=""):
-    """投顧級戰術分群核心 (極限省水版)"""
-    
+    row_dict = row.to_dict()
+    row_dict['收盤價'] = close
+    row_dict['MA20'] = ma20
+    row_dict['乖離率(%)'] = bias
+    row_dict['動能比例(%)'] = mom_pct
+    row_dict['連買天數'] = days
+    return row_dict
+
+def calculate_scores(df, min_trust, max_bias, max_price, token=""):
+    """終極單一總分演算引擎"""
     df_filtered = df[df['投信買賣超'] >= min_trust].copy()
-    if df_filtered.empty:
-        return pd.DataFrame()
+    if df_filtered.empty: return pd.DataFrame()
 
-    st.info(f"⚡ 階段一：啟動 yfinance 價格雷達，掃描 {len(df_filtered)} 檔標的...")
+    st.info(f"⚡ 啟動量化引擎：正在對 {len(df_filtered)} 檔標的進行深度運算...")
     
-    price_results = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        future_to_code = {executor.submit(fetch_yfinance_data, row['代號']): row for _, row in df_filtered.iterrows()}
+    results = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        future_to_code = {executor.submit(process_stock, row, token): row for _, row in df_filtered.iterrows()}
         for future in concurrent.futures.as_completed(future_to_code):
-            row = future_to_code[future]
-            close, ma20, bias = future.result()
-            if close is not None:
-                row_dict = row.to_dict()
-                row_dict['收盤價'] = close
-                row_dict['MA20'] = ma20
-                row_dict['乖離率(%)'] = bias
-                price_results.append(row_dict)
-                
-    if not price_results:
-        return pd.DataFrame()
-        
-    df_price = pd.DataFrame(price_results)
-    df_price = df_price[df_price['乖離率(%)'] <= max_bias].copy()
-    if df_price.empty:
-        return pd.DataFrame()
+            res = future.result()
+            if res is not None:
+                results.append(res)
 
-    st.info(f"⚡ 階段二：啟動 FinMind 籌碼透視，對剩餘 {len(df_price)} 檔精銳進行深度分析...")
-    
-    final_results = []
-    today_str = datetime.now().strftime('%Y-%m-%d')
-    
-    for _, row in df_price.iterrows():
-        code = row['代號']
-        today_trust_buy = row['投信買賣超']
-        foreign_buy = row['外資買賣超']
-        bias = row['乖離率(%)']
-        
-        # 呼叫 v3 版快取
-        recent_20_buy, consecutive_buy_hist, latest_date, total_shares = fetch_finmind_cached_v3(code, finmind_token)
-        
-        consecutive_buy = consecutive_buy_hist
-        final_recent_20 = recent_20_buy
-        
-        if latest_date != today_str and today_trust_buy > 0:
-            consecutive_buy += 1
-            final_recent_20 += (today_trust_buy * 1000)
-            
-        trust_ratio = 0.0
-        if total_shares and total_shares > 0:
-            trust_ratio = (final_recent_20 / total_shares) * 100
-            
-        row_dict = row.to_dict()
-        row_dict['動能比例(%)'] = round(trust_ratio, 2)
-        row_dict['連買天數'] = consecutive_buy
-        
-        # ==========================================
-        # 🌟 雙維度評分系統
-        # ==========================================
-        raw_exp = (today_trust_buy * 0.6 + foreign_buy * 0.4) / 100
-        exp_score = max(0.0, raw_exp)
-        row_dict['🔥 爆發力'] = round(exp_score, 1)
-        
-        raw_def = (max_bias - bias) * (100 / max_bias) if max_bias > 0 else 0
-        def_score = min(100.0, max(0.0, raw_def))
-        row_dict['🛡️ 防禦力'] = round(def_score, 1)
-        
-        # ==========================================
-        # 🎯 AI 戰術象限分類
-        # ==========================================
-        is_high_exp = (today_trust_buy >= 800) or (exp_score >= 8.0)
-        is_high_def = (bias <= 2.5)
-        
-        if is_high_exp and is_high_def:
-            row_dict['🎯 戰術定位'] = "⭐ 雙劍合璧"
-        elif is_high_exp and not is_high_def:
-            row_dict['🎯 戰術定位'] = "🚀 動能突破"
-        elif not is_high_exp and is_high_def:
-            row_dict['🎯 戰術定位'] = "🐢 底部潛伏"
-        else:
-            row_dict['🎯 戰術定位'] = "👀 觀察雷達"
-        
-        # 戰術標籤
-        tags = []
-        if trust_ratio >= 7.0:
-            tags.append("🔴 結帳警戒(>7%)")
-        elif 0.5 <= trust_ratio < 7.0 and consecutive_buy >= 2:
-            tags.append("🟢 黃金起漲區")
-            
-        if consecutive_buy >= 3:
-            tags.append(f"🔥 連買{consecutive_buy}天")
-            
-        row_dict['戰術標籤'] = " | ".join(tags) if tags else "一般"
-        
-        row_dict['總分'] = exp_score + def_score
-        final_results.append(row_dict)
+    if not results: return pd.DataFrame()
+    df_res = pd.DataFrame(results)
 
-    df_tech = pd.DataFrame(final_results)
-    df_tech = df_tech.sort_values(by='總分', ascending=False)
+    # ==========================================
+    # 🛡️ 第一層：絕對防禦鐵網
+    # ==========================================
+    # 1. 乖離率濾網
+    df_res = df_res[df_res['乖離率(%)'] <= max_bias]
+    # 2. 股價上限濾網 (買得起才看)
+    df_res = df_res[df_res['收盤價'] <= max_price]
     
-    df_tech['投信買賣超'] = df_tech['投信買賣超'].astype(int)
-    df_tech['外資買賣超'] = df_tech['外資買賣超'].astype(int)
+    # 3. 外資倒貨否決權 (Anti-Dump Veto)
+    if '外資買賣超' not in df_res.columns:
+        df_res['外資買賣超'] = 0
+    # 如果外資賣超張數 > 投信買超張數的 3 倍，直接剔除！
+    dump_condition = (df_res['外資買賣超'] < 0) & (df_res['外資買賣超'].abs() > df_res['投信買賣超'] * 3)
+    df_res = df_res[~dump_condition]
+
+    if df_res.empty: return pd.DataFrame()
+
+    # ==========================================
+    # 🏆 第二層：終極總分演算
+    # ==========================================
+    # A. 籌碼基底 (外資大賣會扣分)
+    base_score = (df_res['投信買賣超'] / 100 * 0.6) + (df_res['外資買賣超'] / 100 * 0.4)
+    # B. 動能加權 (小股本大買超直接霸榜)
+    mom_score = df_res['動能比例(%)'] * 50
+    # C. 位階防禦 (越貼近月線分數越高)
+    def_score = (max_bias - df_res['乖離率(%)']) * 10
+
+    df_res['🏆 總分'] = base_score + mom_score + def_score
     
-    cols = ['代號', '名稱', '收盤價', '乖離率(%)', '投信買賣超', '外資買賣超', 
-            '🔥 爆發力', '🛡️ 防禦力', '🎯 戰術定位', '動能比例(%)', '連買天數', '戰術標籤']
-    
-    return df_tech[cols]
+    # ==========================================
+    # 📊 第三層：整理與排序
+    # ==========================================
+    df_res = df_res.sort_values(by='🏆 總分', ascending=False).round(2)
+    df_res['投信買賣超'] = df_res['投信買賣超'].astype(int)
+    df_res['外資買賣超'] = df_res['外資買賣超'].astype(int)
+    df_res['連買天數'] = df_res['連買天數'].astype(int)
+
+    cols = ['代號', '名稱', '收盤價', '乖離率(%)', '投信買賣超', '外資買賣超', '動能比例(%)', '連買天數', '🏆 總分']
+    return df_res[cols]
