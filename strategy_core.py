@@ -17,7 +17,6 @@ def fetch_finmind_data(code, trust_buy_today, token=""):
         
         headers = {'Authorization': f'Bearer {token}'} if token else {}
         
-        # 1. 抓取投信買賣超 (算連買天數)
         chip_url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInstitutionalInvestorsBuySell&data_id={code}&start_date={start_date}&end_date={end_date_str}"
         res_chip = requests.get(chip_url, headers=headers, timeout=5 )
         if res_chip.status_code == 200:
@@ -33,7 +32,6 @@ def fetch_finmind_data(code, trust_buy_today, token=""):
                         else:
                             break
                             
-        # 2. 抓取股本 (算動能比例)
         info_url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInfo&data_id={code}"
         res_info = requests.get(info_url, headers=headers, timeout=5 )
         if res_info.status_code == 200:
@@ -49,7 +47,7 @@ def fetch_finmind_data(code, trust_buy_today, token=""):
     return momentum_pct, continuous_days
 
 def fetch_price_and_ma(code):
-    """抓取收盤價與 MA20"""
+    """抓取收盤價與 MA20，並回傳正確的後綴 (.TW 或 .TWO)"""
     for suffix in ['.TW', '.TWO']:
         try:
             tkr = yf.Ticker(f"{code}{suffix}")
@@ -58,30 +56,30 @@ def fetch_price_and_ma(code):
                 close = float(hist['Close'].iloc[-1])
                 ma20 = float(hist['Close'].rolling(window=20).mean().iloc[-1])
                 bias = ((close - ma20) / ma20) * 100
-                return round(close, 2), round(ma20, 2), round(bias, 2)
+                return round(close, 2), round(ma20, 2), round(bias, 2), suffix
         except:
             continue
-    return None, None, None
+    return None, None, None, None
 
 def process_stock(row, token):
-    """單檔股票處理流"""
+    """單檔股票處理流 (修復上櫃 Bug 版)"""
     code = row['代號']
     trust_buy = row['投信買賣超']
     
-    close, ma20, bias = fetch_price_and_ma(code)
+    # 1. 先抓價格，同時取得這檔股票是上市還是上櫃 (suffix)
+    close, ma20, bias, suffix = fetch_price_and_ma(code)
     if close is None:
         return None
         
+    # 2. 抓取 FinMind 數據
     mom_pct, days = fetch_finmind_data(code, trust_buy, token)
     
-    # yfinance 股本備援機制 (若 FinMind 沒抓到)
-    if mom_pct == 0:
+    # 3. 完美的 yfinance 股本備援機制
+    if mom_pct == 0 and suffix is not None:
         try:
-            tkr = yf.Ticker(f"{code}.TW")
+            # 直接使用剛剛確認過正確的後綴 (.TW 或 .TWO) 去查股本，絕不報錯！
+            tkr = yf.Ticker(f"{code}{suffix}")
             shares = tkr.info.get('sharesOutstanding', 0)
-            if shares == 0:
-                tkr = yf.Ticker(f"{code}.TWO")
-                shares = tkr.info.get('sharesOutstanding', 0)
             if shares > 0:
                 mom_pct = round((trust_buy * 1000 / shares) * 100, 2)
         except:
@@ -113,38 +111,26 @@ def calculate_scores(df, min_trust, max_bias, max_price, token=""):
     if not results: return pd.DataFrame()
     df_res = pd.DataFrame(results)
 
-    # ==========================================
-    # 🛡️ 第一層：絕對防禦鐵網
-    # ==========================================
     # 1. 乖離率濾網
     df_res = df_res[df_res['乖離率(%)'] <= max_bias]
-    # 2. 股價上限濾網 (買得起才看)
+    # 2. 股價上限濾網
     df_res = df_res[df_res['收盤價'] <= max_price]
     
-    # 3. 外資倒貨否決權 (Anti-Dump Veto)
+    # 3. 外資倒貨否決權
     if '外資買賣超' not in df_res.columns:
         df_res['外資買賣超'] = 0
-    # 如果外資賣超張數 > 投信買超張數的 3 倍，直接剔除！
     dump_condition = (df_res['外資買賣超'] < 0) & (df_res['外資買賣超'].abs() > df_res['投信買賣超'] * 3)
     df_res = df_res[~dump_condition]
 
     if df_res.empty: return pd.DataFrame()
 
-    # ==========================================
-    # 🏆 第二層：終極總分演算
-    # ==========================================
-    # A. 籌碼基底 (外資大賣會扣分)
+    # 🏆 總分演算
     base_score = (df_res['投信買賣超'] / 100 * 0.6) + (df_res['外資買賣超'] / 100 * 0.4)
-    # B. 動能加權 (小股本大買超直接霸榜)
     mom_score = df_res['動能比例(%)'] * 50
-    # C. 位階防禦 (越貼近月線分數越高)
     def_score = (max_bias - df_res['乖離率(%)']) * 10
 
     df_res['🏆 總分'] = base_score + mom_score + def_score
     
-    # ==========================================
-    # 📊 第三層：整理與排序
-    # ==========================================
     df_res = df_res.sort_values(by='🏆 總分', ascending=False).round(2)
     df_res['投信買賣超'] = df_res['投信買賣超'].astype(int)
     df_res['外資買賣超'] = df_res['外資買賣超'].astype(int)
