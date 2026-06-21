@@ -7,7 +7,7 @@ import yfinance as yf
 CAPSULE_FILE = "time_capsules.csv"
 
 def save_capsule(df_results, strategy_mode, min_trust, max_bias):
-    """將掃描結果封裝存檔"""
+    """將掃描結果封裝存檔 (V24.2 戰術分群相容版)"""
     if df_results.empty:
         return False
     
@@ -20,8 +20,16 @@ def save_capsule(df_results, strategy_mode, min_trust, max_bias):
     df_save['參數_投信下限'] = min_trust
     df_save['參數_乖離上限'] = max_bias
     
-    # 重新排列欄位，讓元數據排在前面
-    cols = ['掃描日期', '策略模式', '代號', '名稱', '收盤價', '總分'] + [c for c in df_save.columns if c not in ['掃描日期', '策略模式', '代號', '名稱', '收盤價', '總分']]
+    # 【修復關鍵】：動態排列欄位，不再硬性要求「總分」
+    base_cols = ['掃描日期', '策略模式', '代號', '名稱', '收盤價']
+    
+    # 如果有新版的戰術定位，就排在前面；如果是舊版，就排總分
+    if '🎯 戰術定位' in df_save.columns:
+        base_cols.append('🎯 戰術定位')
+    elif '總分' in df_save.columns:
+        base_cols.append('總分')
+        
+    cols = base_cols + [c for c in df_save.columns if c not in base_cols]
     df_save = df_save[cols]
     
     # 存入 CSV (如果檔案存在就附加，不存在就建立)
@@ -92,11 +100,12 @@ def render_capsule_ui():
             df_show['區間報酬(%)'] = ((df_show['最新股價'] - df_show['收盤價']) / df_show['收盤價']) * 100
             df_show['區間報酬(%)'] = df_show['區間報酬(%)'].round(2)
             
-            # 整理顯示欄位 (已修復語法錯誤)
+            # 整理顯示欄位
             cols = ['當時收盤價(建倉成本)' if c=='收盤價' else c for c in df_show.columns]
             df_show.columns = cols
             
-            display_cols = ['代號', '名稱', '當時收盤價(建倉成本)', '最新股價', '區間報酬(%)', '總分', '戰術標籤']
+            # 【修復關鍵】：支援新舊版本的欄位顯示
+            display_cols = ['代號', '名稱', '當時收盤價(建倉成本)', '最新股價', '區間報酬(%)', '🎯 戰術定位', '總分', '🔥 爆發力', '🛡️ 防禦力', '戰術標籤']
             available_cols = [c for c in display_cols if c in df_show.columns]
             display_df = df_show[available_cols]
             
