@@ -8,16 +8,16 @@ try:
     from time_capsule import save_capsule, render_capsule_ui
     from market_filter import render_market_dashboard
     from portfolio_monitor import render_portfolio_monitor
-    from backtest_engine import run_batch_backtest # 匯入 V25 回測引擎
+    from backtest_engine import run_batch_backtest
     MODULES_LOADED = True
 except ImportError as e:
     MODULES_LOADED = False
     st.error(f"模組匯入失敗: {e}。請確認所有 .py 檔案皆已建立。")
 
-st.set_page_config(page_title="HIOS Wave Radar V25", layout="wide")
+st.set_page_config(page_title="HIOS Wave Radar V25.1", layout="wide")
 
 def main():
-    st.title("🌊 HIOS Wave Radar V25 - 歷史回測沙盒版")
+    st.title("🌊 HIOS Wave Radar V25.1 - 戰術回測沙盒版")
 
     if not MODULES_LOADED:
         st.stop()
@@ -54,7 +54,7 @@ def main():
         st.sidebar.download_button(label="💾 下載最新戰情包", data=json_str, file_name="HIOS_Portfolio.json", mime="application/json")
 
     # ==========================================
-    # 🌟 V25 三分頁架構
+    # 🌟 V25.1 三分頁架構
     # ==========================================
     tab1, tab2, tab3 = st.tabs(["🚀 雷達掃描室 (找飆股)", "🛡️ 持股監控中心 (顧陣地)", "⏳ V25 回測沙盒 (驗證勝率)"])
 
@@ -122,10 +122,19 @@ def main():
         except Exception as e:
             st.error(f"監控中心發生錯誤: {e}")
 
-    # --- 分頁三：V25 回測沙盒 ---
+    # --- 分頁三：V25.1 戰術回測沙盒 ---
     with tab3:
-        st.header("⏳ V25 歷史回測沙盒 (上帝視角)")
+        st.header("⏳ V25.1 戰術回測沙盒 (上帝視角)")
         st.markdown("上傳過去某天的 CSV，系統將模擬當天買進，並嚴格執行 **「跌破 10MA 停損/停利」** 的紀律，為您結算真實勝率！")
+        
+        # 【關鍵升級】：新增戰術濾網 UI
+        st.subheader("🎯 選擇要回測的戰術部隊")
+        tactics_options = ["⭐ 雙劍合璧", "🚀 動能突破", "🐢 底部潛伏", "👀 觀察雷達"]
+        selected_tactics = st.multiselect(
+            "過濾雜魚，只回測精銳標的：", 
+            options=tactics_options, 
+            default=["⭐ 雙劍合璧", "🚀 動能突破"] # 預設只測最強的兩個象限
+        )
         
         col1, col2 = st.columns([1, 2])
         with col1:
@@ -133,9 +142,11 @@ def main():
         with col2:
             bt_files = st.file_uploader("📂 上傳該日的法人 CSV 檔", type="csv", accept_multiple_files=True, key="bt_uploader")
             
-        if st.button("⚙️ 啟動時光機回測", type="primary"):
+        if st.button("⚙️ 啟動戰術時光機", type="primary"):
             if not bt_files:
                 st.warning("請上傳歷史 CSV 檔案！")
+            elif not selected_tactics:
+                st.warning("請至少選擇一種戰術定位進行回測！")
             else:
                 all_dfs = []
                 for f in bt_files:
@@ -148,17 +159,17 @@ def main():
                     df_clean = df_clean.groupby(['代號', '名稱'], as_index=False).sum()
                     
                     date_str = backtest_date.strftime('%Y-%m-%d')
-                    df_bt_results = run_batch_backtest(df_clean, date_str, min_trust_buy, max_bias)
+                    # 將使用者勾選的戰術傳入引擎
+                    df_bt_results = run_batch_backtest(df_clean, date_str, min_trust_buy, max_bias, selected_tactics)
                     
                     if not df_bt_results.empty:
-                        # 計算回測統計數據
                         total_trades = len(df_bt_results)
                         win_trades = len(df_bt_results[df_bt_results['區間報酬(%)'] > 0])
-                        win_rate = (win_trades / total_trades) * 100
+                        win_rate = (win_trades / total_trades) * 100 if total_trades > 0 else 0
                         avg_return = df_bt_results['區間報酬(%)'].mean()
                         
                         st.markdown("---")
-                        st.subheader("📊 回測績效總結")
+                        st.subheader("📊 戰術回測績效總結")
                         m1, m2, m3 = st.columns(3)
                         m1.metric("總交易檔數", f"{total_trades} 檔")
                         m2.metric("策略勝率 (賺錢比例)", f"{win_rate:.1f} %")
@@ -166,13 +177,14 @@ def main():
                         
                         st.markdown("### 📜 逐筆交易明細")
                         styled_bt = df_bt_results.style.format({
-                            "乖離率(%)": "{:.2f}", "進場價(隔日開盤)": "{:.2f}", "出場價": "{:.2f}", 
+                            "🔥 爆發力": "{:.1f}", "🛡️ 防禦力": "{:.1f}", "乖離率(%)": "{:.2f}", 
+                            "進場價(隔日開盤)": "{:.2f}", "出場價": "{:.2f}", 
                             "最大漲幅(%)": "{:.2f}", "區間報酬(%)": "{:.2f}"
                         }).background_gradient(cmap='RdYlGn', subset=['區間報酬(%)'])
                         
                         st.dataframe(styled_bt, use_container_width=True, hide_index=True)
                     else:
-                        st.warning("該日沒有符合條件的股票，或歷史股價抓取失敗。")
+                        st.warning("該日沒有符合您所選戰術條件的股票，或歷史股價抓取失敗。")
 
 if __name__ == "__main__":
     main()
