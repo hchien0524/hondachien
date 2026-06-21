@@ -99,15 +99,24 @@ def simulate_trade(code, base_date_str, max_bias, max_price, min_volume, trust_b
         '出場原因': exit_reason
     }
 
-def run_batch_backtest(df_chip, base_date_str, min_trust, max_bias, max_price, min_volume):
-    """批次執行回測 (單一參數版)"""
+def run_batch_backtest(df_chip, base_date_str, min_trust, max_bias, max_price, min_volume, show_progress=True):
+    """批次執行回測 (加入可視化進度條)"""
     df_filtered = df_chip[df_chip['投信買賣超'] >= min_trust].copy()
     if df_filtered.empty:
         return pd.DataFrame()
         
-    st.info(f"⏳ 時光機啟動：正在對 {len(df_filtered)} 檔標的進行平行宇宙演算...")
+    total_stocks = len(df_filtered)
+    
+    # 【新增】動態進度條
+    if show_progress:
+        progress_text = f"⏳ 時光機啟動：正在對 {total_stocks} 檔標的進行平行宇宙演算..."
+        my_bar = st.progress(0, text=progress_text)
+    else:
+        st.info(f"⏳ 時光機啟動：正在對 {total_stocks} 檔標的進行平行宇宙演算...")
     
     results = []
+    completed = 0
+    
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         future_to_code = {
             executor.submit(
@@ -123,6 +132,15 @@ def run_batch_backtest(df_chip, base_date_str, min_trust, max_bias, max_price, m
                 res['投信買超'] = int(row['投信買賣超'])
                 results.append(res)
                 
+            # 更新進度條
+            completed += 1
+            if show_progress:
+                progress_pct = int((completed / total_stocks) * 100)
+                my_bar.progress(progress_pct, text=f"⏳ 聯網演算中... ({completed}/{total_stocks} 檔)")
+                
+    if show_progress:
+        my_bar.empty() # 跑完後隱藏進度條
+        
     if not results:
         return pd.DataFrame()
         
@@ -134,19 +152,21 @@ def run_batch_backtest(df_chip, base_date_str, min_trust, max_bias, max_price, m
     return df_results
 
 def run_grid_search(df_chip, base_date_str, max_price, min_volume):
-    """【新增】AI 網格搜索：O(1) 極速切片架構"""
-    # 1. 用最寬鬆的參數跑一次底層回測 (減少 API 呼叫)
-    loose_trust = 300
+    """AI 網格搜索：O(1) 極速切片架構"""
+    # 1. 用較寬鬆的參數跑一次底層回測 (將 300 提高到 500，避免 API 塞車)
+    loose_trust = 500 
     loose_bias = 10.0
     
-    st.info("🤖 AI 尋標引擎啟動：正在獲取底層數據 (這可能需要一點時間，請稍候)...")
-    df_base = run_batch_backtest(df_chip, base_date_str, loose_trust, loose_bias, max_price, min_volume)
+    st.info("🤖 AI 尋標引擎啟動：正在獲取底層數據 (這可能需要 30~60 秒，請勿關閉網頁)...")
+    
+    # 呼叫回測引擎，並開啟進度條
+    df_base = run_batch_backtest(df_chip, base_date_str, loose_trust, loose_bias, max_price, min_volume, show_progress=True)
     
     if df_base.empty:
         return pd.DataFrame()
         
     # 2. 定義網格參數 (20 種組合)
-    trust_steps = [300, 500, 1000, 1500, 2000]
+    trust_steps = [500, 800, 1000, 1500, 2000]
     bias_steps = [3.0, 5.0, 8.0, 10.0]
     
     results = []
