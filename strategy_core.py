@@ -24,10 +24,11 @@ def fetch_yfinance_data(code):
     return None, None, None
 
 # ==========================================
-# 引擎二：FinMind (更改函數名稱為 v2，強制清除中毒的快取)
+# 引擎二：FinMind (籌碼) + yfinance (股本) 極限省水版
 # ==========================================
 @st.cache_data(ttl=43200, show_spinner=False)
-def fetch_finmind_cached_v2(code, token):
+def fetch_finmind_cached_v3(code, token):
+    """V3: 股本改用 yfinance 查詢，FinMind 額度消耗減半！"""
     token_str = f"&token={token}" if token else ""
     end_date = datetime.now()
     start_date = (end_date - timedelta(days=45)).strftime('%Y-%m-%d')
@@ -38,6 +39,7 @@ def fetch_finmind_cached_v2(code, token):
     total_shares = 0
     
     try:
+        # 1. 抓取投信籌碼 (消耗 1 次 FinMind 額度)
         chip_url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInstitutionalInvestorsBuySell&data_id={code}&start_date={start_date}{token_str}"
         res_chip = requests.get(chip_url, timeout=5 )
         if res_chip.status_code == 200:
@@ -57,14 +59,15 @@ def fetch_finmind_cached_v2(code, token):
                             break
                     recent_20_buy = df_trust.head(20)['buy_sell'].sum()
 
-        share_url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockShareholding&data_id={code}&start_date={start_date}{token_str}"
-        res_share = requests.get(share_url, timeout=5 )
-        if res_share.status_code == 200:
-            share_data = res_share.json()
-            if share_data.get('data'):
-                df_share = pd.DataFrame(share_data['data'])
-                latest_share_date = df_share['date'].max()
-                total_shares = df_share[df_share['date'] == latest_share_date]['number_of_shares'].sum()
+        # 2. 抓取發行股數 (改用 yfinance 極速查詢，消耗 0 次 FinMind 額度！)
+        try:
+            tkr = yf.Ticker(f"{code}.TW")
+            total_shares = tkr.fast_info.get('shares')
+            if not total_shares:
+                tkr = yf.Ticker(f"{code}.TWO")
+                total_shares = tkr.fast_info.get('shares')
+        except:
+            total_shares = 0
                 
     except Exception as e:
         pass
@@ -73,7 +76,7 @@ def fetch_finmind_cached_v2(code, token):
     return recent_20_buy, consecutive_buy_hist, latest_date, total_shares
 
 def calculate_scores(df, min_trust, max_bias, finmind_token=""):
-    """投顧級戰術分群核心 (數值校準版)"""
+    """投顧級戰術分群核心 (極限省水版)"""
     
     df_filtered = df[df['投信買賣超'] >= min_trust].copy()
     if df_filtered.empty:
@@ -113,8 +116,8 @@ def calculate_scores(df, min_trust, max_bias, finmind_token=""):
         foreign_buy = row['外資買賣超']
         bias = row['乖離率(%)']
         
-        # 呼叫 v2 版快取，強制清除舊的 0
-        recent_20_buy, consecutive_buy_hist, latest_date, total_shares = fetch_finmind_cached_v2(code, finmind_token)
+        # 呼叫 v3 版快取
+        recent_20_buy, consecutive_buy_hist, latest_date, total_shares = fetch_finmind_cached_v3(code, finmind_token)
         
         consecutive_buy = consecutive_buy_hist
         final_recent_20 = recent_20_buy
@@ -124,7 +127,7 @@ def calculate_scores(df, min_trust, max_bias, finmind_token=""):
             final_recent_20 += (today_trust_buy * 1000)
             
         trust_ratio = 0.0
-        if total_shares > 0:
+        if total_shares and total_shares > 0:
             trust_ratio = (final_recent_20 / total_shares) * 100
             
         row_dict = row.to_dict()
@@ -132,14 +135,12 @@ def calculate_scores(df, min_trust, max_bias, finmind_token=""):
         row_dict['連買天數'] = consecutive_buy
         
         # ==========================================
-        # 🌟 雙維度評分系統 (完美校準版)
+        # 🌟 雙維度評分系統
         # ==========================================
-        # 爆發力：最低 0 分 (外資大賣最多扣到 0)，無上限 (買越多分數越高)
         raw_exp = (today_trust_buy * 0.6 + foreign_buy * 0.4) / 100
         exp_score = max(0.0, raw_exp)
         row_dict['🔥 爆發力'] = round(exp_score, 1)
         
-        # 防禦力：最高 100 分 (跌破月線視為滿分安全)，最低 0 分
         raw_def = (max_bias - bias) * (100 / max_bias) if max_bias > 0 else 0
         def_score = min(100.0, max(0.0, raw_def))
         row_dict['🛡️ 防禦力'] = round(def_score, 1)
@@ -171,9 +172,7 @@ def calculate_scores(df, min_trust, max_bias, finmind_token=""):
             
         row_dict['戰術標籤'] = " | ".join(tags) if tags else "一般"
         
-        # 隱藏的總分 (用於預設排序，讓雙劍合璧排前面)
         row_dict['總分'] = exp_score + def_score
-        
         final_results.append(row_dict)
 
     df_tech = pd.DataFrame(final_results)
