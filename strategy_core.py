@@ -7,7 +7,7 @@ import time
 import yfinance as yf
 
 # ==========================================
-# 引擎一：yfinance 負責股價與 MA20 (免費用到飽)
+# 引擎一：yfinance 負責股價與 MA20
 # ==========================================
 def fetch_yfinance_data(code):
     for suffix in ['.TW', '.TWO']:
@@ -24,10 +24,10 @@ def fetch_yfinance_data(code):
     return None, None, None
 
 # ==========================================
-# 引擎二：FinMind 負責籌碼與股本 (加入 12 小時快取，極限省水)
+# 引擎二：FinMind (更改函數名稱為 v2，強制清除中毒的快取)
 # ==========================================
 @st.cache_data(ttl=43200, show_spinner=False)
-def fetch_finmind_cached(code, token):
+def fetch_finmind_cached_v2(code, token):
     token_str = f"&token={token}" if token else ""
     end_date = datetime.now()
     start_date = (end_date - timedelta(days=45)).strftime('%Y-%m-%d')
@@ -73,7 +73,7 @@ def fetch_finmind_cached(code, token):
     return recent_20_buy, consecutive_buy_hist, latest_date, total_shares
 
 def calculate_scores(df, min_trust, max_bias, finmind_token=""):
-    """投顧級戰術分群核心 (一鍵全掃版)"""
+    """投顧級戰術分群核心 (數值校準版)"""
     
     df_filtered = df[df['投信買賣超'] >= min_trust].copy()
     if df_filtered.empty:
@@ -113,7 +113,8 @@ def calculate_scores(df, min_trust, max_bias, finmind_token=""):
         foreign_buy = row['外資買賣超']
         bias = row['乖離率(%)']
         
-        recent_20_buy, consecutive_buy_hist, latest_date, total_shares = fetch_finmind_cached(code, finmind_token)
+        # 呼叫 v2 版快取，強制清除舊的 0
+        recent_20_buy, consecutive_buy_hist, latest_date, total_shares = fetch_finmind_cached_v2(code, finmind_token)
         
         consecutive_buy = consecutive_buy_hist
         final_recent_20 = recent_20_buy
@@ -131,22 +132,22 @@ def calculate_scores(df, min_trust, max_bias, finmind_token=""):
         row_dict['連買天數'] = consecutive_buy
         
         # ==========================================
-        # 🌟 雙維度評分系統
+        # 🌟 雙維度評分系統 (完美校準版)
         # ==========================================
-        # 爆發力：純看籌碼張數 (投信權重較高)
-        exp_score = (today_trust_buy * 0.6 + foreign_buy * 0.4) / 100
+        # 爆發力：最低 0 分 (外資大賣最多扣到 0)，無上限 (買越多分數越高)
+        raw_exp = (today_trust_buy * 0.6 + foreign_buy * 0.4) / 100
+        exp_score = max(0.0, raw_exp)
         row_dict['🔥 爆發力'] = round(exp_score, 1)
         
-        # 防禦力：純看乖離率 (離月線越近分數越高，最高 100 分)
-        def_score = max(0, (max_bias - bias) * (100 / max_bias)) if max_bias > 0 else 0
+        # 防禦力：最高 100 分 (跌破月線視為滿分安全)，最低 0 分
+        raw_def = (max_bias - bias) * (100 / max_bias) if max_bias > 0 else 0
+        def_score = min(100.0, max(0.0, raw_def))
         row_dict['🛡️ 防禦力'] = round(def_score, 1)
         
         # ==========================================
         # 🎯 AI 戰術象限分類
         # ==========================================
-        # 定義高爆發：投信買超 > 800張 或 爆發力 > 8
         is_high_exp = (today_trust_buy >= 800) or (exp_score >= 8.0)
-        # 定義高防禦：乖離率 <= 2.5%
         is_high_def = (bias <= 2.5)
         
         if is_high_exp and is_high_def:
@@ -158,7 +159,7 @@ def calculate_scores(df, min_trust, max_bias, finmind_token=""):
         else:
             row_dict['🎯 戰術定位'] = "👀 觀察雷達"
         
-        # 戰術標籤 (備註)
+        # 戰術標籤
         tags = []
         if trust_ratio >= 7.0:
             tags.append("🔴 結帳警戒(>7%)")
@@ -170,7 +171,7 @@ def calculate_scores(df, min_trust, max_bias, finmind_token=""):
             
         row_dict['戰術標籤'] = " | ".join(tags) if tags else "一般"
         
-        # 隱藏的總分 (僅用於預設排序，讓雙劍合璧排前面)
+        # 隱藏的總分 (用於預設排序，讓雙劍合璧排前面)
         row_dict['總分'] = exp_score + def_score
         
         final_results.append(row_dict)
@@ -181,7 +182,6 @@ def calculate_scores(df, min_trust, max_bias, finmind_token=""):
     df_tech['投信買賣超'] = df_tech['投信買賣超'].astype(int)
     df_tech['外資買賣超'] = df_tech['外資買賣超'].astype(int)
     
-    # 重新排列輸出的欄位 (移除舊的 MA20，讓畫面更乾淨)
     cols = ['代號', '名稱', '收盤價', '乖離率(%)', '投信買賣超', '外資買賣超', 
             '🔥 爆發力', '🛡️ 防禦力', '🎯 戰術定位', '動能比例(%)', '連買天數', '戰術標籤']
     
