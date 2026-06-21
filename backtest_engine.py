@@ -4,8 +4,8 @@ import concurrent.futures
 from datetime import datetime, timedelta
 import streamlit as st
 
-def simulate_trade(code, base_date_str, max_bias, trust_buy, foreign_buy):
-    """單檔股票的時光機回測邏輯 (導入戰術象限版)"""
+def simulate_trade(code, base_date_str, max_bias, max_price, trust_buy, foreign_buy):
+    """單檔股票的時光機回測邏輯 (極簡總分版)"""
     base_date = pd.to_datetime(base_date_str)
     start_fetch = (base_date - timedelta(days=90)).strftime('%Y-%m-%d')
     end_fetch = (base_date + timedelta(days=40)).strftime('%Y-%m-%d')
@@ -38,53 +38,38 @@ def simulate_trade(code, base_date_str, max_bias, trust_buy, foreign_buy):
     if pd.isna(base_ma20) or base_ma20 == 0:
         return None
         
+    # 1. 乖離率濾網
     bias = ((base_close - base_ma20) / base_ma20) * 100
     if bias > max_bias:
         return None
         
-    # ==========================================
-    # 🌟 歷史時空的戰術定位演算
-    # ==========================================
-    raw_exp = (trust_buy * 0.6 + foreign_buy * 0.4) / 100
-    exp_score = max(0.0, raw_exp)
-    
-    raw_def = (max_bias - bias) * (100 / max_bias) if max_bias > 0 else 0
-    def_score = min(100.0, max(0.0, raw_def))
-    
-    is_high_exp = (trust_buy >= 800) or (exp_score >= 8.0)
-    is_high_def = (bias <= 2.5)
-    
-    if is_high_exp and is_high_def:
-        tactical_pos = "⭐ 雙劍合璧"
-    elif is_high_exp and not is_high_def:
-        tactical_pos = "🚀 動能突破"
-    elif not is_high_exp and is_high_def:
-        tactical_pos = "🐢 底部潛伏"
-    else:
-        tactical_pos = "👀 觀察雷達"
+    # 2. 股價上限濾網
+    if base_close > max_price:
+        return None
         
-    # ==========================================
+    # 3. 外資倒貨否決權
+    if foreign_buy < 0 and abs(foreign_buy) > trust_buy * 3:
+        return None
         
     df_future = df_stock[df_stock.index > base_date].head(20)
     
     if df_future.empty:
         return {
             '代號': code, '基準日收盤': round(base_close, 2), '乖離率(%)': round(bias, 2),
-            '🎯 戰術定位': tactical_pos, '🔥 爆發力': round(exp_score, 1), '🛡️ 防禦力': round(def_score, 1),
             '進場價(隔日開盤)': 0, '出場價': 0, '最大漲幅(%)': 0, '區間報酬(%)': 0,
             '持有天數': 0, '出場原因': "⏳ 尚無未來數據"
         }
         
     entry_price = float(df_future['Open'].iloc[0])
-    max_price = entry_price
+    max_price_val = entry_price
     exit_price = float(df_future['Close'].iloc[-1])
     exit_reason = "⏳ 結算到期"
     hold_days = len(df_future)
     
     for i in range(len(df_future)):
         current_row = df_future.iloc[i]
-        if current_row['High'] > max_price:
-            max_price = current_row['High']
+        if current_row['High'] > max_price_val:
+            max_price_val = current_row['High']
             
         if current_row['Close'] < current_row['MA10']:
             exit_price = current_row['Close']
@@ -94,7 +79,7 @@ def simulate_trade(code, base_date_str, max_bias, trust_buy, foreign_buy):
             
     if entry_price > 0:
         ret_pct = ((exit_price - entry_price) / entry_price) * 100
-        max_runup = ((max_price - entry_price) / entry_price) * 100
+        max_runup = ((max_price_val - entry_price) / entry_price) * 100
     else:
         ret_pct = 0
         max_runup = 0
@@ -103,9 +88,6 @@ def simulate_trade(code, base_date_str, max_bias, trust_buy, foreign_buy):
         '代號': code,
         '基準日收盤': round(base_close, 2),
         '乖離率(%)': round(bias, 2),
-        '🎯 戰術定位': tactical_pos,
-        '🔥 爆發力': round(exp_score, 1),
-        '🛡️ 防禦力': round(def_score, 1),
         '進場價(隔日開盤)': round(entry_price, 2),
         '出場價': round(exit_price, 2),
         '最大漲幅(%)': round(max_runup, 2),
@@ -114,8 +96,8 @@ def simulate_trade(code, base_date_str, max_bias, trust_buy, foreign_buy):
         '出場原因': exit_reason
     }
 
-def run_batch_backtest(df_chip, base_date_str, min_trust, max_bias, target_tactics):
-    """批次執行回測 (加入戰術濾網)"""
+def run_batch_backtest(df_chip, base_date_str, min_trust, max_bias, max_price):
+    """批次執行回測 (極簡總分版)"""
     df_filtered = df_chip[df_chip['投信買賣超'] >= min_trust].copy()
     if df_filtered.empty:
         return pd.DataFrame()
@@ -130,6 +112,7 @@ def run_batch_backtest(df_chip, base_date_str, min_trust, max_bias, target_tacti
                 row['代號'], 
                 base_date_str, 
                 max_bias, 
+                max_price,
                 row['投信買賣超'], 
                 row.get('外資買賣超', 0)
             ): row for _, row in df_filtered.iterrows()
@@ -138,17 +121,15 @@ def run_batch_backtest(df_chip, base_date_str, min_trust, max_bias, target_tacti
             row = future_to_code[future]
             res = future.result()
             if res is not None:
-                # 【關鍵】：只保留符合使用者勾選的戰術定位標的
-                if res['🎯 戰術定位'] in target_tactics:
-                    res['名稱'] = row['名稱']
-                    res['投信買超'] = int(row['投信買賣超'])
-                    results.append(res)
+                res['名稱'] = row['名稱']
+                res['投信買超'] = int(row['投信買賣超'])
+                results.append(res)
                 
     if not results:
         return pd.DataFrame()
         
     df_results = pd.DataFrame(results)
-    cols = ['代號', '名稱', '🎯 戰術定位', '投信買超', '🔥 爆發力', '🛡️ 防禦力', '乖離率(%)', '進場價(隔日開盤)', '出場價', '最大漲幅(%)', '區間報酬(%)', '持有天數', '出場原因']
+    cols = ['代號', '名稱', '投信買超', '乖離率(%)', '進場價(隔日開盤)', '出場價', '最大漲幅(%)', '區間報酬(%)', '持有天數', '出場原因']
     df_results = df_results[cols]
     df_results = df_results.sort_values(by='區間報酬(%)', ascending=False)
     
