@@ -2,40 +2,30 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import requests
-import re
 
 @st.cache_data(ttl=86400)
-def fetch_stock_name(code):
-    """終極正名系統：FinMind + Yahoo奇摩股市爬蟲雙備援"""
-    # 1. 先嘗試 FinMind (若額度恢復則秒抓)
+def build_stock_mapping():
+    """終極正名系統：直接抓取政府官方開放資料 (每日更新一次，無次數限制，絕不被擋)"""
+    mapping = {}
+    # 1. 抓取上市股票字典 (TWSE)
     try:
-        url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInfo&data_id={code}"
-        res = requests.get(url, timeout=2 )
-        if res.status_code == 200:
-            data = res.json().get('data', [])
-            if len(data) > 0:
-                name = data[0].get('stock_name', '').strip()
-                if name: return name
-    except:
-        pass
-
-    # 2. FinMind 罷工時，啟動 Yahoo 奇摩股市網頁爬蟲 (無 API 限制)
-    try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-        url = f"https://tw.stock.yahoo.com/quote/{code}"
-        res = requests.get(url, headers=headers, timeout=3 )
-        if res.status_code == 200:
-            # 尋找標題格式： <title>義隆(2458) - 股價走勢 - Yahoo奇摩股市</title>
-            match = re.search(r'<title>(.*?)\(\d+\)', res.text)
-            if match:
-                name = match.group(1).strip()
-                if name: return name
+        res_twse = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=5 )
+        if res_twse.status_code == 200:
+            for item in res_twse.json():
+                mapping[str(item.get('Code'))] = str(item.get('Name'))
     except:
         pass
         
-    return f"股票 {code}"
+    # 2. 抓取上櫃股票字典 (TPEx)
+    try:
+        res_tpex = requests.get("https://www.tpex.org.tw/openapi/v1/t187ap03_O", timeout=5 )
+        if res_tpex.status_code == 200:
+            for item in res_tpex.json():
+                mapping[str(item.get('公司代號'))] = str(item.get('公司簡稱'))
+    except:
+        pass
+        
+    return mapping
 
 @st.cache_data(ttl=300)
 def get_stock_tech(code):
@@ -102,6 +92,9 @@ def render_portfolio_monitor():
     red_lights = 0
     
     chip_df = st.session_state.get('latest_chip_data', pd.DataFrame())
+    
+    # 載入官方股票字典
+    stock_dict = build_stock_mapping()
 
     with st.spinner("📡 正在與交易所連線，同步最新防守線與股名..."):
         for item in portfolio:
@@ -109,7 +102,7 @@ def render_portfolio_monitor():
             name = item.get('名稱', '')
             cost = float(item.get('建倉價', item.get('收盤價', 0.0)))
             
-            # 【新增】自動正名邏輯 (解決只有代號沒有股名的問題)
+            # 【終極正名邏輯】如果名字是空的，或是之前抓失敗留下的「股票 XXX」，就從官方字典抓
             if not name or name == '自選股' or name.startswith('股票'):
                 found = False
                 if not chip_df.empty and '代號' in chip_df.columns:
@@ -118,7 +111,7 @@ def render_portfolio_monitor():
                         name = str(match['名稱'].iloc[0])
                         found = True
                 if not found:
-                    name = fetch_stock_name(code)
+                    name = stock_dict.get(code, f"股票 {code}")
                 item['名稱'] = name # 更新回 session_state 讓他永遠記住
             
             close, ma5, ma10, ma20 = get_stock_tech(code)
@@ -185,7 +178,6 @@ def render_portfolio_monitor():
     # ==========================================
     # 3. 危險持股置頂排序與渲染
     # ==========================================
-    # 排序邏輯：先排危險度 (紅>黃>綠)，同燈號再排報酬率 (賠越多的越上面)
     processed_data.sort(key=lambda x: (x['status_score'], -x['ret_pct']), reverse=True)
 
     st.markdown("---")
@@ -195,7 +187,6 @@ def render_portfolio_monitor():
         code = item['code']
         
         with st.container():
-            # 標題與燈號
             st.markdown(f"""
             <div style="border-left: 6px solid {item['color']}; padding-left: 15px; margin-bottom: 15px; background-color: rgba(255,255,255,0.03); border-radius: 5px; padding-top: 5px; padding-bottom: 5px;">
                 <h4 style="margin-bottom: 0;">[{code}] {item['name']} <span style="font-size: 18px; color: {item['color']}; margin-left: 10px;"> {item['status_text']}</span></h4>
@@ -241,7 +232,6 @@ def render_portfolio_monitor():
                 else:
                     st.caption("無最新籌碼資料")
                     
-                # 💡 獲利保本戰術提示
                 if item['ret_pct'] > 5 and item['status_score'] == 1:
                     st.info("💡 獲利已拉開，建議將防守線設為成本價，確保不敗！")
 
