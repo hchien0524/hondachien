@@ -47,7 +47,7 @@ def fetch_finmind_data(code, trust_buy_today, token=""):
     return momentum_pct, continuous_days
 
 def fetch_price_and_ma(code):
-    """抓取收盤價與 MA20，並回傳正確的後綴 (.TW 或 .TWO)"""
+    """抓取收盤價、MA20，並搭便車抓取 5日均量"""
     for suffix in ['.TW', '.TWO']:
         try:
             tkr = yf.Ticker(f"{code}{suffix}")
@@ -56,28 +56,27 @@ def fetch_price_and_ma(code):
                 close = float(hist['Close'].iloc[-1])
                 ma20 = float(hist['Close'].rolling(window=20).mean().iloc[-1])
                 bias = ((close - ma20) / ma20) * 100
-                return round(close, 2), round(ma20, 2), round(bias, 2), suffix
+                # 【新增】計算 5 日均量，並除以 1000 轉換為「張」
+                vol_5ma = float(hist['Volume'].rolling(window=5).mean().iloc[-1]) / 1000
+                return round(close, 2), round(ma20, 2), round(bias, 2), round(vol_5ma, 0), suffix
         except:
             continue
-    return None, None, None, None
+    return None, None, None, None, None
 
 def process_stock(row, token):
-    """單檔股票處理流 (修復上櫃 Bug 版)"""
+    """單檔股票處理流"""
     code = row['代號']
     trust_buy = row['投信買賣超']
     
-    # 1. 先抓價格，同時取得這檔股票是上市還是上櫃 (suffix)
-    close, ma20, bias, suffix = fetch_price_and_ma(code)
+    # 接收新增的 vol_5ma
+    close, ma20, bias, vol_5ma, suffix = fetch_price_and_ma(code)
     if close is None:
         return None
         
-    # 2. 抓取 FinMind 數據
     mom_pct, days = fetch_finmind_data(code, trust_buy, token)
     
-    # 3. 完美的 yfinance 股本備援機制
     if mom_pct == 0 and suffix is not None:
         try:
-            # 直接使用剛剛確認過正確的後綴 (.TW 或 .TWO) 去查股本，絕不報錯！
             tkr = yf.Ticker(f"{code}{suffix}")
             shares = tkr.info.get('sharesOutstanding', 0)
             if shares > 0:
@@ -89,12 +88,13 @@ def process_stock(row, token):
     row_dict['收盤價'] = close
     row_dict['MA20'] = ma20
     row_dict['乖離率(%)'] = bias
+    row_dict['5日均量(張)'] = vol_5ma  # 【新增】寫入字典
     row_dict['動能比例(%)'] = mom_pct
     row_dict['連買天數'] = days
     return row_dict
 
-def calculate_scores(df, min_trust, max_bias, max_price, token=""):
-    """終極單一總分演算引擎"""
+def calculate_scores(df, min_trust, max_bias, max_price, min_volume, token=""):
+    """終極單一總分演算引擎 (加入流動性濾網)"""
     df_filtered = df[df['投信買賣超'] >= min_trust].copy()
     if df_filtered.empty: return pd.DataFrame()
 
@@ -115,8 +115,10 @@ def calculate_scores(df, min_trust, max_bias, max_price, token=""):
     df_res = df_res[df_res['乖離率(%)'] <= max_bias]
     # 2. 股價上限濾網
     df_res = df_res[df_res['收盤價'] <= max_price]
+    # 3. 【新增】流動性濾網 (剔除殭屍股)
+    df_res = df_res[df_res['5日均量(張)'] >= min_volume]
     
-    # 3. 外資倒貨否決權
+    # 4. 外資倒貨否決權
     if '外資買賣超' not in df_res.columns:
         df_res['外資買賣超'] = 0
     dump_condition = (df_res['外資買賣超'] < 0) & (df_res['外資買賣超'].abs() > df_res['投信買賣超'] * 3)
@@ -135,6 +137,8 @@ def calculate_scores(df, min_trust, max_bias, max_price, token=""):
     df_res['投信買賣超'] = df_res['投信買賣超'].astype(int)
     df_res['外資買賣超'] = df_res['外資買賣超'].astype(int)
     df_res['連買天數'] = df_res['連買天數'].astype(int)
+    df_res['5日均量(張)'] = df_res['5日均量(張)'].astype(int)
 
-    cols = ['代號', '名稱', '收盤價', '乖離率(%)', '投信買賣超', '外資買賣超', '動能比例(%)', '連買天數', '🏆 總分']
+    # 【新增】將 5日均量 加入顯示欄位
+    cols = ['代號', '名稱', '收盤價', '乖離率(%)', '5日均量(張)', '投信買賣超', '外資買賣超', '動能比例(%)', '連買天數', '🏆 總分']
     return df_res[cols]
