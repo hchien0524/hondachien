@@ -4,7 +4,7 @@ import json
 
 # 匯入模組
 try:
-    from data_engine import parse_chip_csv  # 確保這裡對應您的檔案名稱 (data_engine.py)
+    from data_engine import parse_chip_csv  
     from strategy_core import calculate_scores
     from time_capsule import save_capsule, render_capsule_ui
     from market_filter import render_market_dashboard
@@ -17,7 +17,7 @@ except ImportError as e:
 st.set_page_config(page_title="HIOS Wave Radar V24.2", layout="wide")
 
 def main():
-    st.title("🌊 HIOS Wave Radar V24.2 - 實體戰情包升級版")
+    st.title("🌊 HIOS Wave Radar V24.2 - FinMind 引擎升級版")
 
     if not MODULES_LOADED:
         st.stop()
@@ -33,6 +33,9 @@ def main():
     strategy_mode = st.sidebar.radio("🧠 選擇大腦", ["雙大腦交集 (推薦)", "短波突擊大腦", "長線大底大腦"])
     min_trust_buy = st.sidebar.number_input("投信買超下限 (張)", value=100, step=50)
     max_bias = st.sidebar.number_input("MA20 乖離率上限 (%)", value=5.0, step=0.5)
+    
+    # 新增 FinMind Token 輸入框 (防 API 封鎖)
+    finmind_token = st.sidebar.text_input("🔑 FinMind Token (選填，防封鎖)", type="password", help="免費註冊 FinMind 取得 Token 可大幅提升掃描速度與穩定度")
 
     st.sidebar.markdown("---")
     
@@ -48,12 +51,8 @@ def main():
     uploaded_portfolio = st.sidebar.file_uploader("📥 匯入舊陣地 (上傳 JSON 檔)", type=['json'])
     if uploaded_portfolio is not None:
         try:
-            # 讀取並解析 JSON
             portfolio_data = json.load(uploaded_portfolio)
-            
-            # 防呆：確認上傳的檔案格式正確
             if isinstance(portfolio_data, list):
-                # 只有當目前陣地為空，或者使用者按下確認時才覆蓋，避免誤觸
                 if st.sidebar.button("⚠️ 確認覆蓋目前陣地", type="primary"):
                     st.session_state['portfolio'] = portfolio_data
                     st.sidebar.success("✅ 陣地恢復成功！請查看持股監控中心。")
@@ -67,9 +66,7 @@ def main():
 
     # 2. 匯出戰情包 (下載 JSON)
     if st.session_state['portfolio']:
-        # 將目前的陣地資料轉成 JSON 字串
         json_str = json.dumps(st.session_state['portfolio'], ensure_ascii=False, indent=2)
-        
         st.sidebar.download_button(
             label="💾 下載最新戰情包 (備份)",
             data=json_str,
@@ -105,12 +102,11 @@ def main():
                         st.error("❌ 找不到符合的資料，請確認 CSV 格式。")
                     else:
                         df_clean = pd.concat(all_dfs, ignore_index=True)
-                        # 將清洗好的籌碼存入 session_state
                         st.session_state['latest_chip_data'] = df_clean
                         
-                        df_results = calculate_scores(df_clean, min_trust_buy, max_bias, strategy_mode)
+                        # 【關鍵修改】：將 finmind_token 傳入核心引擎
+                        df_results = calculate_scores(df_clean, min_trust_buy, max_bias, strategy_mode, finmind_token)
                         
-                        # 【防閃退關鍵】：將掃描結果存入 session_state，避免點擊收編時畫面消失
                         st.session_state['scan_results'] = df_results
                         st.success(f"✅ 成功匯入籌碼資料，共保留 {len(df_clean)} 檔純血普通股。")
                         
@@ -118,7 +114,7 @@ def main():
                             save_capsule(df_results, strategy_mode, min_trust_buy, max_bias)
 
         # ==========================================
-        # 🌟 顯示掃描結果與一鍵收編 UI (獨立於掃描按鈕之外)
+        # 🌟 顯示掃描結果與一鍵收編 UI
         # ==========================================
         if 'scan_results' in st.session_state:
             df_results = st.session_state['scan_results']
@@ -126,14 +122,20 @@ def main():
             if not df_results.empty:
                 st.markdown(f"### 🎯 掃描完成！共篩選出 {len(df_results)} 檔 S 級真龍")
                 
-                # 1. 準備 Data Editor 的資料 (加入 Checkbox 欄位)
                 df_display = df_results.copy()
                 if '加入監控' not in df_display.columns:
                     df_display.insert(0, '加入監控', False)
                 
-                # 2. 渲染可互動的表格 (取代原本唯讀的 st.dataframe)
+                # 針對新欄位進行 UI 格式化優化
+                styled_df = df_display.style.format({
+                    "收盤價": "{:.2f}", "MA20": "{:.2f}", "乖離率(%)": "{:.2f}",
+                    "投信買賣超": "{:.0f}", "外資買賣超": "{:.0f}", 
+                    "動能比例(%)": "{:.2f}", "連買天數": "{:.0f}", "總分": "{:.2f}"
+                }).background_gradient(cmap='RdYlGn_r', subset=['乖離率(%)']) \
+                  .background_gradient(cmap='YlGn', subset=['總分'])
+                
                 edited_df = st.data_editor(
-                    df_display,
+                    styled_df,
                     column_config={
                         "加入監控": st.column_config.CheckboxColumn(
                             "📥 收編",
@@ -141,14 +143,14 @@ def main():
                             default=False,
                         )
                     },
-                    disabled=[col for col in df_display.columns if col != '加入監控'], # 除了 Checkbox 其他唯讀
+                    disabled=[col for col in df_display.columns if col != '加入監控'],
                     hide_index=True,
                     use_container_width=True,
                     key="radar_data_editor"
                 )
                 
-                # 3. 一鍵收編按鈕
                 if st.button("📥 將勾選標的加入監控中心", type="primary"):
+                    # 注意：styled_df 編輯後回傳的是 DataFrame，所以可以直接篩選
                     selected_rows = edited_df[edited_df['加入監控'] == True]
                     if selected_rows.empty:
                         st.warning("⚠️ 請先在表格中勾選要收編的股票！")
@@ -159,7 +161,6 @@ def main():
                             name = str(row['名稱'])
                             price = float(row['收盤價'])
                             
-                            # 檢查是否已存在於陣地中
                             exists = any(str(item.get('代號', '')) == code for item in st.session_state['portfolio'])
                             if not exists:
                                 st.session_state['portfolio'].append({
