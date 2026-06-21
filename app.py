@@ -14,10 +14,10 @@ except ImportError as e:
     MODULES_LOADED = False
     st.error(f"模組匯入失敗: {e}。請確認所有 .py 檔案皆已建立。")
 
-st.set_page_config(page_title="HIOS Wave Radar V25.2", layout="wide")
+st.set_page_config(page_title="HIOS Wave Radar V25.3", layout="wide")
 
 def main():
-    st.title("🌊 HIOS Wave Radar V25.2 - 返璞歸真極簡版")
+    st.title("🌊 HIOS Wave Radar V25.3 - 終極防禦版")
 
     if not MODULES_LOADED:
         st.stop()
@@ -30,8 +30,9 @@ def main():
     st.sidebar.header("⚙️ 戰術參數設定")
     min_trust_buy = st.sidebar.number_input("投信買超下限 (張)", value=100, step=50)
     max_bias = st.sidebar.number_input("MA20 乖離率上限 (%)", value=5.0, step=0.5)
-    # 【新增】股價上限濾網
     max_price = st.sidebar.number_input("💰 最高股價上限 (元)", value=500.0, step=50.0)
+    # 【新增】流動性參數
+    min_volume = st.sidebar.number_input("💧 最低 5 日均量 (張)", value=1000, step=500)
     finmind_token = st.sidebar.text_input("🔑 FinMind Token (選填)", type="password")
 
     st.sidebar.markdown("---")
@@ -77,8 +78,8 @@ def main():
                         df_clean = df_clean.groupby(['代號', '名稱'], as_index=False).sum()
                         st.session_state['latest_chip_data'] = df_clean
                         
-                        # 傳入 max_price 參數
-                        df_results = calculate_scores(df_clean, min_trust_buy, max_bias, max_price, finmind_token)
+                        # 傳入 min_volume 參數
+                        df_results = calculate_scores(df_clean, min_trust_buy, max_bias, max_price, min_volume, finmind_token)
                         st.session_state['scan_results'] = df_results
                         st.success(f"✅ 成功匯入籌碼資料，共保留 {len(df_clean)} 檔純血普通股。")
                         
@@ -93,10 +94,10 @@ def main():
                 if '加入監控' not in df_display.columns:
                     df_display.insert(0, '加入監控', False)
                 
-                # 極簡化視覺渲染
+                # 加入 5日均量 顯示格式
                 styled_df = df_display.style.format({
-                    "收盤價": "{:.2f}", "乖離率(%)": "{:.2f}", "投信買賣超": "{:.0f}", "外資買賣超": "{:.0f}", 
-                    "動能比例(%)": "{:.2f}", "連買天數": "{:.0f}", "🏆 總分": "{:.1f}"
+                    "收盤價": "{:.2f}", "乖離率(%)": "{:.2f}", "5日均量(張)": "{:.0f}", "投信買賣超": "{:.0f}", 
+                    "外資買賣超": "{:.0f}", "動能比例(%)": "{:.2f}", "連買天數": "{:.0f}", "🏆 總分": "{:.1f}"
                 }).background_gradient(cmap='RdYlGn_r', subset=['乖離率(%)']).background_gradient(cmap='YlGn', subset=['🏆 總分'])
                 
                 edited_df = st.data_editor(styled_df, column_config={"加入監控": st.column_config.CheckboxColumn("📥 收編", default=False)}, disabled=[col for col in df_display.columns if col != '加入監控'], hide_index=True, use_container_width=True)
@@ -122,7 +123,7 @@ def main():
             st.error(f"監控中心發生錯誤: {e}")
 
     with tab3:
-        st.header("⏳ V25.2 戰術回測沙盒 (極簡版)")
+        st.header("⏳ V25.3 戰術回測沙盒 (極簡版)")
         st.markdown("上傳過去某天的 CSV，系統將模擬當天買進，並嚴格執行 **「跌破 10MA 停損/停利」** 的紀律，為您結算真實勝率！")
         
         col1, col2 = st.columns([1, 2])
@@ -146,8 +147,8 @@ def main():
                     df_clean = df_clean.groupby(['代號', '名稱'], as_index=False).sum()
                     
                     date_str = backtest_date.strftime('%Y-%m-%d')
-                    # 移除戰術象限，改傳入 max_price
-                    df_bt_results = run_batch_backtest(df_clean, date_str, min_trust_buy, max_bias, max_price)
+                    # 傳入 min_volume 確保回測也不會買到殭屍股
+                    df_bt_results = run_batch_backtest(df_clean, date_str, min_trust_buy, max_bias, max_price, min_volume)
                     
                     if not df_bt_results.empty:
                         total_trades = len(df_bt_results)
