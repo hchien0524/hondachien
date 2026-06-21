@@ -4,11 +4,11 @@ import requests
 from datetime import datetime, timedelta
 import streamlit as st
 import time
+import yfinance as yf
 
 def fetch_finmind_data(code, token=""):
     """
-    V24.2 全新 FinMind 數據引擎
-    整合抓取：股價、MA20、投信連買天數、投信近期持股比例
+    V24.2 終極修復版：FinMind 籌碼 + yfinance 極速股本查詢
     """
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     
@@ -21,7 +21,7 @@ def fetch_finmind_data(code, token=""):
     consecutive_buy = 0
     
     try:
-        # 1. 抓取股價與 MA20
+        # 1. 抓取股價與 MA20 (FinMind)
         price_url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id={code}&start_date={start_date}"
         res_price = requests.get(price_url, headers=headers, timeout=5 )
         if res_price.status_code == 200:
@@ -33,7 +33,7 @@ def fetch_finmind_data(code, token=""):
                     ma20 = df_price['close'].rolling(window=20).mean().iloc[-1]
                     bias = ((close - ma20) / ma20) * 100
 
-        # 2. 抓取投信籌碼與發行股數 (計算持股比例與連買)
+        # 2. 抓取投信籌碼 (FinMind)
         chip_url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInstitutionalInvestorsBuySell&data_id={code}&start_date={start_date}"
         res_chip = requests.get(chip_url, headers=headers, timeout=5 )
         if res_chip.status_code == 200:
@@ -43,11 +43,15 @@ def fetch_finmind_data(code, token=""):
                 df_trust = df_chip[df_chip['name'] == '投信'].copy()
                 
                 if not df_trust.empty:
-                    # 【修復異常二】：FinMind 欄位是 buy 和 sell，必須相減算出淨買賣超
-                    df_trust['buy_sell'] = df_trust['buy'] - df_trust['sell']
+                    # 【修復】：確保有 buy 和 sell 欄位並相減算出淨買賣超
+                    if 'buy' in df_trust.columns and 'sell' in df_trust.columns:
+                        df_trust['buy_sell'] = df_trust['buy'] - df_trust['sell']
+                    elif 'buy_sell' not in df_trust.columns:
+                        df_trust['buy_sell'] = 0
+                        
+                    df_trust = df_trust.sort_values('date', ascending=False)
                     
                     # 計算連買天數
-                    df_trust = df_trust.sort_values('date', ascending=False)
                     for val in df_trust['buy_sell']:
                         if val > 0:
                             consecutive_buy += 1
@@ -57,21 +61,24 @@ def fetch_finmind_data(code, token=""):
                     # 計算近 20 日累積買超 (股)
                     recent_20_buy = df_trust.head(20)['buy_sell'].sum()
                     
-                    # 抓取發行股數
-                    share_url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockShareholding&data_id={code}&start_date={start_date}"
-                    res_share = requests.get(share_url, headers=headers, timeout=5 )
-                    if res_share.status_code == 200:
-                        share_data = res_share.json()
-                        if len(share_data.get('data', [])) > 0:
-                            issued_shares = share_data['data'][-1].get('number_of_shares_issued', 0)
-                            if issued_shares > 0:
-                                # 計算近期投信買超佔股本比例 (%)
-                                trust_ratio = (recent_20_buy / issued_shares) * 100
+                    # 3. 抓取發行股數 (改用 yfinance fast_info，極速且不耗 FinMind 額度)
+                    try:
+                        ticker = yf.Ticker(f"{code}.TW")
+                        shares = ticker.fast_info.get('shares')
+                        if not shares:
+                            ticker = yf.Ticker(f"{code}.TWO")
+                            shares = ticker.fast_info.get('shares')
+                            
+                        if shares and shares > 0:
+                            # 計算近期投信買超佔股本比例 (%)
+                            trust_ratio = (recent_20_buy / shares) * 100
+                    except:
+                        pass
 
     except Exception as e:
         pass
         
-    # 稍微暫停，避免觸發 FinMind 免費版 API 限制 (429 Error)
+    # 稍微暫停，保護 API 不被封鎖
     time.sleep(0.2) 
     
     return (
@@ -83,7 +90,7 @@ def fetch_finmind_data(code, token=""):
     )
 
 def calculate_scores(df, min_trust, max_bias, mode, finmind_token=""):
-    """雙大腦評分邏輯核心 (V24.2 FinMind 升級版)"""
+    """雙大腦評分邏輯核心"""
     
     # 1. 初步濾網：投信買超必須大於設定下限
     df_filtered = df[df['投信買賣超'] >= min_trust].copy()
@@ -109,18 +116,19 @@ def calculate_scores(df, min_trust, max_bias, mode, finmind_token=""):
                 row_dict['連買天數'] = consecutive_buy
                 
                 # ==========================================
-                # 🌟 戰術標籤 (備註) 生成邏輯
+                # 🌟 戰術標籤 (備註) 生成邏輯 (已優化觸發條件)
                 # ==========================================
                 tags = []
                 if trust_ratio >= 7.0:
                     tags.append("🔴 結帳警戒(>7%)")
-                elif 1.0 <= trust_ratio <= 3.0 and consecutive_buy >= 2:
+                # 將黃金起漲區的門檻微調為 0.5%，因為大型股要買到 1% 其實非常多
+                elif 0.5 <= trust_ratio < 7.0 and consecutive_buy >= 2:
                     tags.append("🟢 黃金起漲區")
                     
                 if consecutive_buy >= 3:
                     tags.append(f"🔥 連買{consecutive_buy}天")
                     
-                if bias <= 2.0:
+                if bias is not None and bias <= 2.0:
                     tags.append("🛡️ 貼近月線")
                     
                 row_dict['戰術標籤'] = " | ".join(tags) if tags else "一般"
