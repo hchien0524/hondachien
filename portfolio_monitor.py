@@ -2,19 +2,39 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import requests
+import re
 
 @st.cache_data(ttl=86400)
 def fetch_stock_name(code):
-    """備援：從 FinMind 抓取真實股名"""
+    """終極正名系統：FinMind + Yahoo奇摩股市爬蟲雙備援"""
+    # 1. 先嘗試 FinMind (若額度恢復則秒抓)
     try:
         url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInfo&data_id={code}"
-        res = requests.get(url, timeout=3 )
+        res = requests.get(url, timeout=2 )
         if res.status_code == 200:
             data = res.json().get('data', [])
             if len(data) > 0:
-                return data[0].get('stock_name', '')
+                name = data[0].get('stock_name', '').strip()
+                if name: return name
     except:
         pass
+
+    # 2. FinMind 罷工時，啟動 Yahoo 奇摩股市網頁爬蟲 (無 API 限制)
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        url = f"https://tw.stock.yahoo.com/quote/{code}"
+        res = requests.get(url, headers=headers, timeout=3 )
+        if res.status_code == 200:
+            # 尋找標題格式： <title>義隆(2458) - 股價走勢 - Yahoo奇摩股市</title>
+            match = re.search(r'<title>(.*?)\(\d+\)', res.text)
+            if match:
+                name = match.group(1).strip()
+                if name: return name
+    except:
+        pass
+        
     return f"股票 {code}"
 
 @st.cache_data(ttl=300)
