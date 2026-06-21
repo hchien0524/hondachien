@@ -8,16 +8,16 @@ try:
     from time_capsule import save_capsule, render_capsule_ui
     from market_filter import render_market_dashboard
     from portfolio_monitor import render_portfolio_monitor
-    from backtest_engine import run_batch_backtest
+    from backtest_engine import run_batch_backtest, run_grid_search
     MODULES_LOADED = True
 except ImportError as e:
     MODULES_LOADED = False
     st.error(f"模組匯入失敗: {e}。請確認所有 .py 檔案皆已建立。")
 
-st.set_page_config(page_title="HIOS Wave Radar V26.1", layout="wide")
+st.set_page_config(page_title="HIOS Wave Radar V26.2", layout="wide")
 
 def main():
-    st.title("🌊 HIOS Wave Radar V26.1 - 族群共振版")
+    st.title("🌊 HIOS Wave Radar V26.2 - AI 尋標版")
 
     if not MODULES_LOADED:
         st.stop()
@@ -92,7 +92,6 @@ def main():
                 if '加入監控' not in df_display.columns:
                     df_display.insert(0, '加入監控', False)
                 
-                # 【更新】加入 產業類別 與 戰術標籤 的顯示格式
                 styled_df = df_display.style.format({
                     "收盤價": "{:.2f}", "乖離率(%)": "{:.2f}", "5日均量(張)": "{:.0f}", "投信買賣超": "{:.0f}", 
                     "外資買賣超": "{:.0f}", "動能比例(%)": "{:.2f}", "連買天數": "{:.0f}", "🏆 總分": "{:.1f}"
@@ -121,8 +120,8 @@ def main():
             st.error(f"監控中心發生錯誤: {e}")
 
     with tab3:
-        st.header("⏳ V25.3 戰術回測沙盒 (極簡版)")
-        st.markdown("上傳過去某天的 CSV，系統將模擬當天買進，並嚴格執行 **「跌破 10MA 停損/停利」** 的紀律，為您結算真實勝率！")
+        st.header("⏳ V26.2 戰術回測沙盒 (AI 尋標版)")
+        st.markdown("上傳過去某天的 CSV，系統將模擬當天買進，並嚴格執行 **「跌破 10MA 停損/停利」** 的紀律。")
         
         col1, col2 = st.columns([1, 2])
         with col1:
@@ -130,7 +129,14 @@ def main():
         with col2:
             bt_files = st.file_uploader("📂 上傳該日的法人 CSV 檔", type="csv", accept_multiple_files=True, key="bt_uploader")
             
-        if st.button("⚙️ 啟動戰術時光機", type="primary"):
+        # 【新增】雙按鈕設計
+        col_btn1, col_btn2 = st.columns(2)
+        with col_btn1:
+            run_normal = st.button("⚙️ 啟動單一參數時光機 (使用左側參數)", type="primary", use_container_width=True)
+        with col_btn2:
+            run_grid = st.button("🤖 啟動 AI 網格尋標 (尋找聖杯參數)", type="primary", use_container_width=True)
+            
+        if run_normal or run_grid:
             if not bt_files:
                 st.warning("請上傳歷史 CSV 檔案！")
             else:
@@ -143,32 +149,56 @@ def main():
                 if all_dfs:
                     df_clean = pd.concat(all_dfs, ignore_index=True)
                     df_clean = df_clean.groupby(['代號', '名稱'], as_index=False).sum()
-                    
                     date_str = backtest_date.strftime('%Y-%m-%d')
-                    df_bt_results = run_batch_backtest(df_clean, date_str, min_trust_buy, max_bias, max_price, min_volume)
                     
-                    if not df_bt_results.empty:
-                        total_trades = len(df_bt_results)
-                        win_trades = len(df_bt_results[df_bt_results['區間報酬(%)'] > 0])
-                        win_rate = (win_trades / total_trades) * 100 if total_trades > 0 else 0
-                        avg_return = df_bt_results['區間報酬(%)'].mean()
-                        
-                        st.markdown("---")
-                        st.subheader("📊 戰術回測績效總結")
-                        m1, m2, m3 = st.columns(3)
-                        m1.metric("總交易檔數", f"{total_trades} 檔")
-                        m2.metric("策略勝率 (賺錢比例)", f"{win_rate:.1f} %")
-                        m3.metric("平均區間報酬", f"{avg_return:.2f} %")
-                        
-                        st.markdown("### 📜 逐筆交易明細")
-                        styled_bt = df_bt_results.style.format({
-                            "乖離率(%)": "{:.2f}", "進場價(隔日開盤)": "{:.2f}", "出場價": "{:.2f}", 
-                            "最大漲幅(%)": "{:.2f}", "區間報酬(%)": "{:.2f}"
-                        }).background_gradient(cmap='RdYlGn', subset=['區間報酬(%)'])
-                        
-                        st.dataframe(styled_bt, use_container_width=True, hide_index=True)
-                    else:
-                        st.warning("該日沒有符合條件的股票，或歷史股價抓取失敗。")
+                    if run_normal:
+                        # 執行單一參數回測
+                        df_bt_results = run_batch_backtest(df_clean, date_str, min_trust_buy, max_bias, max_price, min_volume)
+                        if not df_bt_results.empty:
+                            total_trades = len(df_bt_results)
+                            win_trades = len(df_bt_results[df_bt_results['區間報酬(%)'] > 0])
+                            win_rate = (win_trades / total_trades) * 100 if total_trades > 0 else 0
+                            avg_return = df_bt_results['區間報酬(%)'].mean()
+                            
+                            st.markdown("---")
+                            st.subheader("📊 戰術回測績效總結")
+                            m1, m2, m3 = st.columns(3)
+                            m1.metric("總交易檔數", f"{total_trades} 檔")
+                            m2.metric("策略勝率 (賺錢比例)", f"{win_rate:.1f} %")
+                            m3.metric("平均區間報酬", f"{avg_return:.2f} %")
+                            
+                            st.markdown("### 📜 逐筆交易明細")
+                            styled_bt = df_bt_results.style.format({
+                                "乖離率(%)": "{:.2f}", "進場價(隔日開盤)": "{:.2f}", "出場價": "{:.2f}", 
+                                "最大漲幅(%)": "{:.2f}", "區間報酬(%)": "{:.2f}"
+                            }).background_gradient(cmap='RdYlGn', subset=['區間報酬(%)'])
+                            
+                            st.dataframe(styled_bt, use_container_width=True, hide_index=True)
+                        else:
+                            st.warning("該日沒有符合條件的股票，或歷史股價抓取失敗。")
+                            
+                    elif run_grid:
+                        # 執行 AI 網格尋標
+                        df_grid_results = run_grid_search(df_clean, date_str, max_price, min_volume)
+                        if not df_grid_results.empty:
+                            st.markdown("---")
+                            st.subheader("🏆 AI 聖杯參數排行榜 (已過濾交易檔數 < 3 的極端值)")
+                            
+                            # 標示出第一名的最佳參數
+                            best_trust = df_grid_results.iloc[0]['投信買超下限']
+                            best_bias = df_grid_results.iloc[0]['乖離率上限(%)']
+                            best_win = df_grid_results.iloc[0]['勝率(%)']
+                            
+                            st.success(f"🎯 **AI 判定最佳參數** ➔ 投信買超 >= **{best_trust}** 張 且 乖離率 <= **{best_bias}** % (勝率: {best_win}%)")
+                            
+                            styled_grid = df_grid_results.style.format({
+                                "投信買超下限": "{:.0f}", "乖離率上限(%)": "{:.1f}", 
+                                "交易檔數": "{:.0f}", "勝率(%)": "{:.2f}", "平均報酬(%)": "{:.2f}"
+                            }).background_gradient(cmap='RdYlGn', subset=['勝率(%)', '平均報酬(%)'])
+                            
+                            st.dataframe(styled_grid, use_container_width=True, hide_index=True)
+                        else:
+                            st.warning("無法計算網格數據，可能是該日符合條件的股票太少。")
 
 if __name__ == "__main__":
     main()
