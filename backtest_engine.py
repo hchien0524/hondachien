@@ -4,8 +4,8 @@ import concurrent.futures
 from datetime import datetime, timedelta
 import streamlit as st
 
-def simulate_trade(code, base_date_str, max_bias, max_price, trust_buy, foreign_buy):
-    """單檔股票的時光機回測邏輯 (極簡總分版)"""
+def simulate_trade(code, base_date_str, max_bias, max_price, min_volume, trust_buy, foreign_buy):
+    """單檔股票的時光機回測邏輯 (加入流動性濾網)"""
     base_date = pd.to_datetime(base_date_str)
     start_fetch = (base_date - timedelta(days=90)).strftime('%Y-%m-%d')
     end_fetch = (base_date + timedelta(days=40)).strftime('%Y-%m-%d')
@@ -27,6 +27,8 @@ def simulate_trade(code, base_date_str, max_bias, max_price, trust_buy, foreign_
     df_stock.index = pd.to_datetime(df_stock.index).tz_localize(None).normalize()
     df_stock['MA20'] = df_stock['Close'].rolling(window=20).mean()
     df_stock['MA10'] = df_stock['Close'].rolling(window=10).mean()
+    # 【新增】計算 5 日均量 (張)
+    df_stock['Vol_5MA'] = df_stock['Volume'].rolling(window=5).mean() / 1000
     
     df_past = df_stock[df_stock.index <= base_date]
     if df_past.empty or len(df_past) < 20:
@@ -34,6 +36,7 @@ def simulate_trade(code, base_date_str, max_bias, max_price, trust_buy, foreign_
         
     base_close = float(df_past['Close'].iloc[-1])
     base_ma20 = float(df_past['MA20'].iloc[-1])
+    base_vol_5ma = float(df_past['Vol_5MA'].iloc[-1])
     
     if pd.isna(base_ma20) or base_ma20 == 0:
         return None
@@ -47,7 +50,11 @@ def simulate_trade(code, base_date_str, max_bias, max_price, trust_buy, foreign_
     if base_close > max_price:
         return None
         
-    # 3. 外資倒貨否決權
+    # 3. 【新增】流動性濾網
+    if base_vol_5ma < min_volume:
+        return None
+        
+    # 4. 外資倒貨否決權
     if foreign_buy < 0 and abs(foreign_buy) > trust_buy * 3:
         return None
         
@@ -86,7 +93,8 @@ def simulate_trade(code, base_date_str, max_bias, max_price, trust_buy, foreign_
     
     return {
         '代號': code,
-        '基準日收盤': round(base_close, 2),
+        '名稱': '', # 會在主程式補上
+        '投信買超': int(trust_buy),
         '乖離率(%)': round(bias, 2),
         '進場價(隔日開盤)': round(entry_price, 2),
         '出場價': round(exit_price, 2),
@@ -96,7 +104,7 @@ def simulate_trade(code, base_date_str, max_bias, max_price, trust_buy, foreign_
         '出場原因': exit_reason
     }
 
-def run_batch_backtest(df_chip, base_date_str, min_trust, max_bias, max_price):
+def run_batch_backtest(df_chip, base_date_str, min_trust, max_bias, max_price, min_volume):
     """批次執行回測 (極簡總分版)"""
     df_filtered = df_chip[df_chip['投信買賣超'] >= min_trust].copy()
     if df_filtered.empty:
@@ -105,32 +113,4 @@ def run_batch_backtest(df_chip, base_date_str, min_trust, max_bias, max_price):
     st.info(f"⏳ 時光機啟動：正在對 {len(df_filtered)} 檔標的進行平行宇宙演算...")
     
     results = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        future_to_code = {
-            executor.submit(
-                simulate_trade, 
-                row['代號'], 
-                base_date_str, 
-                max_bias, 
-                max_price,
-                row['投信買賣超'], 
-                row.get('外資買賣超', 0)
-            ): row for _, row in df_filtered.iterrows()
-        }
-        for future in concurrent.futures.as_completed(future_to_code):
-            row = future_to_code[future]
-            res = future.result()
-            if res is not None:
-                res['名稱'] = row['名稱']
-                res['投信買超'] = int(row['投信買賣超'])
-                results.append(res)
-                
-    if not results:
-        return pd.DataFrame()
-        
-    df_results = pd.DataFrame(results)
-    cols = ['代號', '名稱', '投信買超', '乖離率(%)', '進場價(隔日開盤)', '出場價', '最大漲幅(%)', '區間報酬(%)', '持有天數', '出場原因']
-    df_results = df_results[cols]
-    df_results = df_results.sort_values(by='區間報酬(%)', ascending=False)
-    
-    return df_results
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1
