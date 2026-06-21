@@ -14,10 +14,10 @@ except ImportError as e:
     MODULES_LOADED = False
     st.error(f"模組匯入失敗: {e}。請確認所有 .py 檔案皆已建立。")
 
-st.set_page_config(page_title="HIOS Wave Radar V25.3", layout="wide")
+st.set_page_config(page_title="HIOS Wave Radar V26.1", layout="wide")
 
 def main():
-    st.title("🌊 HIOS Wave Radar V25.3 - 終極防禦版")
+    st.title("🌊 HIOS Wave Radar V26.1 - 族群共振版")
 
     if not MODULES_LOADED:
         st.stop()
@@ -31,7 +31,6 @@ def main():
     min_trust_buy = st.sidebar.number_input("投信買超下限 (張)", value=100, step=50)
     max_bias = st.sidebar.number_input("MA20 乖離率上限 (%)", value=5.0, step=0.5)
     max_price = st.sidebar.number_input("💰 最高股價上限 (元)", value=500.0, step=50.0)
-    # 【新增】流動性參數
     min_volume = st.sidebar.number_input("💧 最低 5 日均量 (張)", value=1000, step=500)
     finmind_token = st.sidebar.text_input("🔑 FinMind Token (選填)", type="password")
 
@@ -78,7 +77,6 @@ def main():
                         df_clean = df_clean.groupby(['代號', '名稱'], as_index=False).sum()
                         st.session_state['latest_chip_data'] = df_clean
                         
-                        # 傳入 min_volume 參數
                         df_results = calculate_scores(df_clean, min_trust_buy, max_bias, max_price, min_volume, finmind_token)
                         st.session_state['scan_results'] = df_results
                         st.success(f"✅ 成功匯入籌碼資料，共保留 {len(df_clean)} 檔純血普通股。")
@@ -94,7 +92,7 @@ def main():
                 if '加入監控' not in df_display.columns:
                     df_display.insert(0, '加入監控', False)
                 
-                # 加入 5日均量 顯示格式
+                # 【更新】加入 產業類別 與 戰術標籤 的顯示格式
                 styled_df = df_display.style.format({
                     "收盤價": "{:.2f}", "乖離率(%)": "{:.2f}", "5日均量(張)": "{:.0f}", "投信買賣超": "{:.0f}", 
                     "外資買賣超": "{:.0f}", "動能比例(%)": "{:.2f}", "連買天數": "{:.0f}", "🏆 總分": "{:.1f}"
@@ -147,7 +145,6 @@ def main():
                     df_clean = df_clean.groupby(['代號', '名稱'], as_index=False).sum()
                     
                     date_str = backtest_date.strftime('%Y-%m-%d')
-                    # 傳入 min_volume 確保回測也不會買到殭屍股
                     df_bt_results = run_batch_backtest(df_clean, date_str, min_trust_buy, max_bias, max_price, min_volume)
                     
                     if not df_bt_results.empty:
@@ -164,14 +161,4 @@ def main():
                         m3.metric("平均區間報酬", f"{avg_return:.2f} %")
                         
                         st.markdown("### 📜 逐筆交易明細")
-                        styled_bt = df_bt_results.style.format({
-                            "乖離率(%)": "{:.2f}", "進場價(隔日開盤)": "{:.2f}", "出場價": "{:.2f}", 
-                            "最大漲幅(%)": "{:.2f}", "區間報酬(%)": "{:.2f}"
-                        }).background_gradient(cmap='RdYlGn', subset=['區間報酬(%)'])
-                        
-                        st.dataframe(styled_bt, use_container_width=True, hide_index=True)
-                    else:
-                        st.warning("該日沒有符合條件的股票，或歷史股價抓取失敗。")
-
-if __name__ == "__main__":
-    main()
+                        styled_bt = df_bt_results
