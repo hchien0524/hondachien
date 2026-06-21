@@ -113,4 +113,33 @@ def run_batch_backtest(df_chip, base_date_str, min_trust, max_bias, max_price, m
     st.info(f"⏳ 時光機啟動：正在對 {len(df_filtered)} 檔標的進行平行宇宙演算...")
     
     results = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        future_to_code = {
+            executor.submit(
+                simulate_trade, 
+                row['代號'], 
+                base_date_str, 
+                max_bias, 
+                max_price,
+                min_volume,
+                row['投信買賣超'], 
+                row.get('外資買賣超', 0)
+            ): row for _, row in df_filtered.iterrows()
+        }
+        for future in concurrent.futures.as_completed(future_to_code):
+            row = future_to_code[future]
+            res = future.result()
+            if res is not None:
+                res['名稱'] = row['名稱']
+                res['投信買超'] = int(row['投信買賣超'])
+                results.append(res)
+                
+    if not results:
+        return pd.DataFrame()
+        
+    df_results = pd.DataFrame(results)
+    cols = ['代號', '名稱', '投信買超', '乖離率(%)', '進場價(隔日開盤)', '出場價', '最大漲幅(%)', '區間報酬(%)', '持有天數', '出場原因']
+    df_results = df_results[cols]
+    df_results = df_results.sort_values(by='區間報酬(%)', ascending=False)
+    
+    return df_results
