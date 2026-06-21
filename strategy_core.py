@@ -43,6 +43,9 @@ def fetch_finmind_data(code, token=""):
                 df_trust = df_chip[df_chip['name'] == '投信'].copy()
                 
                 if not df_trust.empty:
+                    # 【修復異常二】：FinMind 欄位是 buy 和 sell，必須相減算出淨買賣超
+                    df_trust['buy_sell'] = df_trust['buy'] - df_trust['sell']
+                    
                     # 計算連買天數
                     df_trust = df_trust.sort_values('date', ascending=False)
                     for val in df_trust['buy_sell']:
