@@ -5,6 +5,21 @@ import concurrent.futures
 import requests
 from datetime import datetime, timedelta
 
+# 【新增】產業翻譯蒟蒻 (yfinance 英文對應台股分類)
+SECTOR_MAPPING = {
+    "Technology": "電子工業",
+    "Basic Materials": "原物料/化工",
+    "Consumer Cyclical": "消費循環",
+    "Financial Services": "金融保險",
+    "Industrials": "工業/電機",
+    "Consumer Defensive": "民生消費",
+    "Healthcare": "生技醫療",
+    "Communication Services": "通信網路業",
+    "Utilities": "公用事業",
+    "Energy": "能源業",
+    "Real Estate": "建材營造"
+}
+
 def fetch_finmind_data(code, trust_buy_today, token=""):
     """抓取 FinMind 籌碼數據，並搭便車抓取「產業類別」"""
     momentum_pct = 0.0
@@ -41,7 +56,6 @@ def fetch_finmind_data(code, trust_buy_today, token=""):
             info_data = res_info.json()
             if len(info_data.get('data', [])) > 0:
                 shares_outstanding = info_data['data'][0].get('IssuedShares', 0)
-                # 【新增】搭便車抓取產業類別
                 industry = info_data['data'][0].get('industry_category', '未知')
                 if shares_outstanding > 0:
                     momentum_pct = round((trust_buy_today * 1000 / shares_outstanding) * 100, 2)
@@ -76,7 +90,6 @@ def process_stock(row, token):
     if close is None:
         return None
         
-    # 接收新增的 industry
     mom_pct, days, industry = fetch_finmind_data(code, trust_buy, token)
     
     # yfinance 備援機制
@@ -87,15 +100,16 @@ def process_stock(row, token):
             shares = info.get('sharesOutstanding', 0)
             if shares > 0:
                 mom_pct = round((trust_buy * 1000 / shares) * 100, 2)
-            # 若 FinMind 沒抓到產業，用 yfinance 的英文產業別頂替
+            # 若 FinMind 沒抓到產業，用 yfinance 的英文產業別頂替，並套用翻譯蒟蒻
             if industry == "未知":
                 yf_sector = info.get('sector', '')
-                if yf_sector: industry = yf_sector
+                if yf_sector: 
+                    industry = SECTOR_MAPPING.get(yf_sector, yf_sector)
         except:
             pass
 
     row_dict = row.to_dict()
-    row_dict['產業類別'] = industry  # 【新增】寫入字典
+    row_dict['產業類別'] = industry
     row_dict['收盤價'] = close
     row_dict['MA20'] = ma20
     row_dict['乖離率(%)'] = bias
@@ -105,7 +119,7 @@ def process_stock(row, token):
     return row_dict
 
 def calculate_scores(df, min_trust, max_bias, max_price, min_volume, token=""):
-    """終極單一總分演算引擎 (加入族群共振雷達)"""
+    """終極單一總分演算引擎 (加入族群共振雷達與翻譯蒟蒻)"""
     df_filtered = df[df['投信買賣超'] >= min_trust].copy()
     if df_filtered.empty: return pd.DataFrame()
 
@@ -159,6 +173,5 @@ def calculate_scores(df, min_trust, max_bias, max_price, min_volume, token=""):
     df_res['連買天數'] = df_res['連買天數'].astype(int)
     df_res['5日均量(張)'] = df_res['5日均量(張)'].astype(int)
 
-    # 【新增】將 產業類別 與 戰術標籤 加入顯示欄位
     cols = ['代號', '名稱', '產業類別', '收盤價', '乖離率(%)', '5日均量(張)', '投信買賣超', '外資買賣超', '動能比例(%)', '連買天數', '🏆 總分', '戰術標籤']
     return df_res[cols]
