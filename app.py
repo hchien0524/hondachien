@@ -102,6 +102,10 @@ def main():
                         st.error("❌ 找不到符合的資料，請確認 CSV 格式。")
                     else:
                         df_clean = pd.concat(all_dfs, ignore_index=True)
+                        
+                        # 【修復異常一】：將多日 CSV 的籌碼加總，消除重複股票
+                        df_clean = df_clean.groupby(['代號', '名稱'], as_index=False).sum()
+                        
                         st.session_state['latest_chip_data'] = df_clean
                         
                         # 【關鍵修改】：將 finmind_token 傳入核心引擎
@@ -150,7 +154,6 @@ def main():
                 )
                 
                 if st.button("📥 將勾選標的加入監控中心", type="primary"):
-                    # 注意：styled_df 編輯後回傳的是 DataFrame，所以可以直接篩選
                     selected_rows = edited_df[edited_df['加入監控'] == True]
                     if selected_rows.empty:
                         st.warning("⚠️ 請先在表格中勾選要收編的股票！")
