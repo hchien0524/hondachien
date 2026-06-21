@@ -105,28 +105,77 @@ def main():
                         st.error("❌ 找不到符合的資料，請確認 CSV 格式。")
                     else:
                         df_clean = pd.concat(all_dfs, ignore_index=True)
-                        # 【關鍵】：將清洗好的籌碼存入 session_state，讓監控中心可以讀取！
+                        # 將清洗好的籌碼存入 session_state
                         st.session_state['latest_chip_data'] = df_clean
                         
-                        st.success(f"✅ 成功匯入籌碼資料，共保留 {len(df_clean)} 檔純血普通股。")
-
                         df_results = calculate_scores(df_clean, min_trust_buy, max_bias, strategy_mode)
-
+                        
+                        # 【防閃退關鍵】：將掃描結果存入 session_state，避免點擊收編時畫面消失
+                        st.session_state['scan_results'] = df_results
+                        st.success(f"✅ 成功匯入籌碼資料，共保留 {len(df_clean)} 檔純血普通股。")
+                        
                         if not df_results.empty:
-                            st.markdown(f"### 🎯 掃描完成！共篩選出 {len(df_results)} 檔 S 級真龍")
-                            try:
-                                styled_df = df_results.style.format({
-                                    "收盤價": "{:.2f}", "MA20": "{:.2f}", "乖離率(%)": "{:.2f}",
-                                    "投信買賣超": "{:.0f}", "外資買賣超": "{:.0f}", "總分": "{:.2f}"
-                                }).background_gradient(cmap='RdYlGn_r', subset=['乖離率(%)']) \
-                                  .background_gradient(cmap='YlGn', subset=['總分'])
-                                st.dataframe(styled_df, use_container_width=True, hide_index=True)
-                            except:
-                                st.dataframe(df_results, use_container_width=True, hide_index=True)
-
                             save_capsule(df_results, strategy_mode, min_trust_buy, max_bias)
+
+        # ==========================================
+        # 🌟 顯示掃描結果與一鍵收編 UI (獨立於掃描按鈕之外)
+        # ==========================================
+        if 'scan_results' in st.session_state:
+            df_results = st.session_state['scan_results']
+            
+            if not df_results.empty:
+                st.markdown(f"### 🎯 掃描完成！共篩選出 {len(df_results)} 檔 S 級真龍")
+                
+                # 1. 準備 Data Editor 的資料 (加入 Checkbox 欄位)
+                df_display = df_results.copy()
+                if '加入監控' not in df_display.columns:
+                    df_display.insert(0, '加入監控', False)
+                
+                # 2. 渲染可互動的表格 (取代原本唯讀的 st.dataframe)
+                edited_df = st.data_editor(
+                    df_display,
+                    column_config={
+                        "加入監控": st.column_config.CheckboxColumn(
+                            "📥 收編",
+                            help="打勾後點擊下方按鈕加入監控",
+                            default=False,
+                        )
+                    },
+                    disabled=[col for col in df_display.columns if col != '加入監控'], # 除了 Checkbox 其他唯讀
+                    hide_index=True,
+                    use_container_width=True,
+                    key="radar_data_editor"
+                )
+                
+                # 3. 一鍵收編按鈕
+                if st.button("📥 將勾選標的加入監控中心", type="primary"):
+                    selected_rows = edited_df[edited_df['加入監控'] == True]
+                    if selected_rows.empty:
+                        st.warning("⚠️ 請先在表格中勾選要收編的股票！")
+                    else:
+                        added_count = 0
+                        for _, row in selected_rows.iterrows():
+                            code = str(row['代號'])
+                            name = str(row['名稱'])
+                            price = float(row['收盤價'])
+                            
+                            # 檢查是否已存在於陣地中
+                            exists = any(str(item.get('代號', '')) == code for item in st.session_state['portfolio'])
+                            if not exists:
+                                st.session_state['portfolio'].append({
+                                    "代號": code,
+                                    "名稱": name,
+                                    "建倉價": price,
+                                    "收盤價": price
+                                })
+                                added_count += 1
+                                
+                        if added_count > 0:
+                            st.success(f"✅ 成功將 {added_count} 檔標的加入監控中心！請切換分頁查看。")
                         else:
-                            st.warning("⚠️ 在目前的嚴格濾網下，沒有股票符合條件。")
+                            st.info("💡 勾選的標的已經在監控中心了。")
+            else:
+                st.warning("⚠️ 在目前的嚴格濾網下，沒有股票符合條件。")
 
         st.markdown("---")
         render_capsule_ui()
