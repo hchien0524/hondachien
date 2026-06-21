@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import streamlit as st
 
 def simulate_trade(code, base_date_str, max_bias, max_price, min_volume, trust_buy, foreign_buy):
-    """單檔股票的時光機回測邏輯 (加入流動性濾網)"""
+    """單檔股票的時光機回測邏輯"""
     base_date = pd.to_datetime(base_date_str)
     start_fetch = (base_date - timedelta(days=90)).strftime('%Y-%m-%d')
     end_fetch = (base_date + timedelta(days=40)).strftime('%Y-%m-%d')
@@ -27,7 +27,6 @@ def simulate_trade(code, base_date_str, max_bias, max_price, min_volume, trust_b
     df_stock.index = pd.to_datetime(df_stock.index).tz_localize(None).normalize()
     df_stock['MA20'] = df_stock['Close'].rolling(window=20).mean()
     df_stock['MA10'] = df_stock['Close'].rolling(window=10).mean()
-    # 【新增】計算 5 日均量 (張)
     df_stock['Vol_5MA'] = df_stock['Volume'].rolling(window=5).mean() / 1000
     
     df_past = df_stock[df_stock.index <= base_date]
@@ -41,20 +40,16 @@ def simulate_trade(code, base_date_str, max_bias, max_price, min_volume, trust_b
     if pd.isna(base_ma20) or base_ma20 == 0:
         return None
         
-    # 1. 乖離率濾網
     bias = ((base_close - base_ma20) / base_ma20) * 100
     if bias > max_bias:
         return None
         
-    # 2. 股價上限濾網
     if base_close > max_price:
         return None
         
-    # 3. 【新增】流動性濾網
     if base_vol_5ma < min_volume:
         return None
         
-    # 4. 外資倒貨否決權
     if foreign_buy < 0 and abs(foreign_buy) > trust_buy * 3:
         return None
         
@@ -93,7 +88,7 @@ def simulate_trade(code, base_date_str, max_bias, max_price, min_volume, trust_b
     
     return {
         '代號': code,
-        '名稱': '', # 會在主程式補上
+        '名稱': '', 
         '投信買超': int(trust_buy),
         '乖離率(%)': round(bias, 2),
         '進場價(隔日開盤)': round(entry_price, 2),
@@ -105,7 +100,7 @@ def simulate_trade(code, base_date_str, max_bias, max_price, min_volume, trust_b
     }
 
 def run_batch_backtest(df_chip, base_date_str, min_trust, max_bias, max_price, min_volume):
-    """批次執行回測 (極簡總分版)"""
+    """批次執行回測 (單一參數版)"""
     df_filtered = df_chip[df_chip['投信買賣超'] >= min_trust].copy()
     if df_filtered.empty:
         return pd.DataFrame()
@@ -116,14 +111,8 @@ def run_batch_backtest(df_chip, base_date_str, min_trust, max_bias, max_price, m
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         future_to_code = {
             executor.submit(
-                simulate_trade, 
-                row['代號'], 
-                base_date_str, 
-                max_bias, 
-                max_price,
-                min_volume,
-                row['投信買賣超'], 
-                row.get('外資買賣超', 0)
+                simulate_trade, row['代號'], base_date_str, max_bias, max_price, min_volume,
+                row['投信買賣超'], row.get('外資買賣超', 0)
             ): row for _, row in df_filtered.iterrows()
         }
         for future in concurrent.futures.as_completed(future_to_code):
@@ -143,3 +132,53 @@ def run_batch_backtest(df_chip, base_date_str, min_trust, max_bias, max_price, m
     df_results = df_results.sort_values(by='區間報酬(%)', ascending=False)
     
     return df_results
+
+def run_grid_search(df_chip, base_date_str, max_price, min_volume):
+    """【新增】AI 網格搜索：O(1) 極速切片架構"""
+    # 1. 用最寬鬆的參數跑一次底層回測 (減少 API 呼叫)
+    loose_trust = 300
+    loose_bias = 10.0
+    
+    st.info("🤖 AI 尋標引擎啟動：正在獲取底層數據 (這可能需要一點時間，請稍候)...")
+    df_base = run_batch_backtest(df_chip, base_date_str, loose_trust, loose_bias, max_price, min_volume)
+    
+    if df_base.empty:
+        return pd.DataFrame()
+        
+    # 2. 定義網格參數 (20 種組合)
+    trust_steps = [300, 500, 1000, 1500, 2000]
+    bias_steps = [3.0, 5.0, 8.0, 10.0]
+    
+    results = []
+    for t in trust_steps:
+        for b in bias_steps:
+            # 3. 透過 DataFrame 切片進行極速模擬
+            df_sim = df_base[(df_base['投信買超'] >= t) & (df_base['乖離率(%)'] <= b)]
+            
+            total_trades = len(df_sim)
+            if total_trades > 0:
+                win_trades = len(df_sim[df_sim['區間報酬(%)'] > 0])
+                win_rate = (win_trades / total_trades) * 100
+                avg_return = df_sim['區間報酬(%)'].mean()
+            else:
+                win_rate = 0
+                avg_return = 0
+                
+            results.append({
+                '投信買超下限': t,
+                '乖離率上限(%)': b,
+                '交易檔數': total_trades,
+                '勝率(%)': round(win_rate, 2),
+                '平均報酬(%)': round(avg_return, 2)
+            })
+            
+    df_grid = pd.DataFrame(results)
+    # 過濾掉交易檔數太少 (< 3 檔) 的無效參數，避免 1 檔全勝導致勝率 100% 的失真
+    df_grid = df_grid[df_grid['交易檔數'] >= 3]
+    
+    if df_grid.empty:
+        return pd.DataFrame()
+        
+    # 排序：先看勝率，再看報酬
+    df_grid = df_grid.sort_values(by=['勝率(%)', '平均報酬(%)'], ascending=[False, False])
+    return df_grid
