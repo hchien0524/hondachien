@@ -126,12 +126,12 @@ def render_portfolio_monitor():
     # --- 4. 渲染現代化戰情卡片 ---
     for item in analyzed_portfolio:
         code = item['code']
-        idx = item['idx'] # 原始在 session_state 中的 index，用於刪除與更新
+        idx = item['idx'] 
         
-        # 卡片外框 CSS
+        # 【關鍵修復】：改用 rgba 自適應透明度，不強制寫死背景與字體顏色
         st.markdown(f"""
-        <div style="border: 1px solid #444; border-radius: 10px; padding: 15px; margin-bottom: 15px; background-color: #1e1e1e;">
-            <h4 style="margin-top: 0; margin-bottom: 10px;">[{code}] {item['name']} &nbsp;&nbsp; {item['status_html']}</h4>
+        <div style="border: 1px solid rgba(128, 128, 128, 0.4); border-radius: 10px; padding: 15px; margin-bottom: 15px; background-color: rgba(128, 128, 128, 0.1);">
+            <h4 style="margin-top: 0; margin-bottom: 10px; color: inherit;">[{code}] {item['name']} &nbsp;&nbsp; {item['status_html']}</h4>
         </div>
         """, unsafe_allow_html=True)
         
