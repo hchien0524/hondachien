@@ -91,7 +91,6 @@ def main():
                 if strategy_core:
                     try:
                         with st.spinner("📡 正在執行 CSV 內部迴圈與籌碼動能分析..."):
-                            # 【關鍵解封】：正式呼叫核心引擎
                             strategy_core.run_radar(uploaded_csvs, filter_momentum, filter_resonance, filter_liquidity)
                     except Exception as e:
                         st.error(f"雷達運算發生錯誤: {e}")
@@ -118,8 +117,8 @@ def main():
             if st.button("啟動 AI 網格搜索", use_container_width=True):
                 if backtest_engine:
                     with st.spinner(f"🕰️ 正在啟動時光機，回到 {target_date} 進行參數最佳化..."):
-                         backtest_engine.run_grid_search(target_date)
-                        st.success("✅ 網格搜索完成！最佳參數已產出。")
+                        # 這裡已經完美對齊，且移除了多餘的 st.success
+                        backtest_engine.run_grid_search(target_date)
                 else:
                     st.warning("⚠️ 找不到 `backtest_engine.py`，請確認回測引擎檔案存在。")
 
