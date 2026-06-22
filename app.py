@@ -167,4 +167,31 @@ def main():
                                                     "代號": code,
                                                     "名稱": row['名稱'],
                                                     "建倉價": float(row['收盤價']),
-                                                    "收盤價": float(row['
+                                                    "收盤價": float(row['收盤價'])
+                                                })
+                                        save_local_portfolio(st.session_state['portfolio'])
+                                        st.success(f"✅ 成功收編 {len(selected_rows)} 檔真龍！已自動備份至本機。")
+                                        st.rerun()
+                                    else:
+                                        st.warning("請先勾選要收編的股票！")
+
+                                save_capsule(df_display, "全自動狙擊", min_trust_buy, max_bias)
+                        else:
+                            st.warning("⚠️ 在目前的基礎參數下，沒有股票符合條件。")
+
+    # --- 分頁二：持股監控中心 ---
+    with tab2:
+        try:
+            render_portfolio_monitor()
+        except Exception as e:
+            st.error(f"監控中心發生錯誤: {e}")
+            
+    # --- 分頁三：時光膠囊 ---
+    with tab3:
+        try:
+            render_capsule_ui()
+        except Exception as e:
+            st.error(f"時光膠囊發生錯誤: {e}")
+
+if __name__ == "__main__":
+    main()
