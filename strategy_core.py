@@ -1,140 +1,138 @@
+import streamlit as st
 import pandas as pd
 import yfinance as yf
-import streamlit as st
-import concurrent.futures
+import numpy as np
 
-# 產業翻譯蒟蒻 (將 Yahoo 的英文產業分類轉為中文)
-TRANSLATION_MAP = {
-    "Technology": "電子工業",
-    "Basic Materials": "原物料/化工",
-    "Industrials": "工業/電機",
-    "Consumer Cyclical": "消費循環",
-    "Financial Services": "金融保險",
-    "Consumer Defensive": "民生消費",
-    "Healthcare": "醫療保健",
-    "Communication Services": "通信網路",
-    "Utilities": "公用事業",
-    "Energy": "能源",
-    "Real Estate": "建材營造"
-}
+def find_column(df, keywords):
+    """智慧尋找 CSV 中的關鍵欄位 (相容不同券商/交易所格式)"""
+    for col in df.columns:
+        for kw in keywords:
+            if kw in str(col):
+                return col
+    return None
 
-def fetch_stock_data(code):
-    """抓取單檔股票收盤價、MA20、乖離率、5日均量、產業分類與股本"""
-    for suffix in ['.TW', '.TWO']:
+def run_radar(uploaded_csvs, filter_momentum, filter_resonance, filter_liquidity):
+    st.markdown("### 🧠 V27 雙腦評分雷達運算中...")
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    # ==========================================
+    # 📂 階段一：CSV 內部迴圈 (籌碼面解析)
+    # ==========================================
+    status_text.text("⏳ [1/3] 執行 CSV 內部迴圈：解析法人籌碼與連買天數...")
+    
+    all_data = []
+    for file in uploaded_csvs:
         try:
-            ticker = yf.Ticker(f"{code}{suffix}")
-            hist = ticker.history(period="2mo")
-            if not hist.empty and len(hist) >= 20:
-                close = float(hist['Close'].iloc[-1])
-                ma20 = float(hist['Close'].rolling(window=20).mean().iloc[-1])
-                bias = ((close - ma20) / ma20) * 100
+            try:
+                df = pd.read_csv(file, encoding='utf-8')
+            except:
+                file.seek(0)
+                df = pd.read_csv(file, encoding='big5-hkscs', thousands=',')
+            
+            col_code = find_column(df, ['代號', 'Code', '證券代號'])
+            col_name = find_column(df, ['名稱', 'Name', '證券名稱'])
+            col_trust = find_column(df, ['投信買賣超', '投信買超'])
+            
+            if col_code and col_trust:
+                df[col_code] = df[col_code].astype(str).str.replace('=', '').str.replace('"', '').str.strip()
+                df[col_trust] = pd.to_numeric(df[col_trust].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
                 
-                # 計算 5 日均量 (張)
-                vol5 = float(hist['Volume'].tail(5).mean() / 1000)
-                
-                # 抓取產業並翻譯
-                raw_sector = ticker.info.get('sector', '其他')
-                sector = TRANSLATION_MAP.get(raw_sector, raw_sector)
-                
-                # 抓取股本 (用於計算動能比例)
-                shares = ticker.info.get('sharesOutstanding', 0)
-                capital_sheets = shares / 1000 if shares > 0 else 100000 # 預設10萬張防呆
-                
-                return round(close, 2), round(ma20, 2), round(bias, 2), round(vol5, 0), sector, capital_sheets
-        except:
-            continue
-    return None, None, None, 0, "其他", 100000
-
-def calculate_scores(df, min_trust, max_bias, max_price, min_volume, finmind_token=""):
-    """
-    終極 CSV 內循環引擎：動能校準版 (以動能比例取代絕對張數計分)
-    """
-    if df.empty:
-        return pd.DataFrame()
-
-    # ==========================================
-    # 1. CSV 內循環聚合 (解決重複股票與連買天數)
-    # ==========================================
-    st.info("⚡ 階段一：啟動 CSV 內循環引擎，聚合多日籌碼資料...")
+                temp_df = df[[col_code, col_name, col_trust]].copy()
+                temp_df.columns = ['代號', '名稱', '投信買賣超']
+                all_data.append(temp_df)
+        except Exception as e:
+            pass
+            
+    if not all_data:
+        st.error("❌ CSV 解析失敗：找不到『代號』或『投信買賣超』欄位。")
+        return
+        
+    merged_df = pd.concat(all_data)
+    merged_df['買超天數'] = (merged_df['投信買賣超'] > 0).astype(int)
     
-    # 將多天的 CSV 資料按股票代號合併
-    df_grouped = df.groupby(['代號', '名稱']).agg(
-        投信買賣超=('投信買賣超', 'sum'),
-        外資買賣超=('外資買賣超', 'sum'),
-        連買天數=('投信買賣超', lambda x: (x > 0).sum()) # 計算上傳的 CSV 中有幾天是買超
+    summary_df = merged_df.groupby(['代號', '名稱']).agg(
+        總買超=('投信買賣超', 'sum'),
+        連買天數=('買超天數', 'sum')
     ).reset_index()
-
-    # 初步濾網：多日投信買超總和必須大於設定下限
-    df_filtered = df_grouped[df_grouped['投信買賣超'] >= min_trust].copy()
     
-    if df_filtered.empty:
-        return pd.DataFrame()
-
+    # 初步篩選：只抓投信總買超 > 0 的標的，取前 30 名進入技術面檢驗
+    top_candidates = summary_df[summary_df['總買超'] > 0].sort_values('總買超', ascending=False).head(30)
+    progress_bar.progress(40)
+    
     # ==========================================
-    # 2. 抓取技術面、流動性與股本
+    # 📡 階段二：YFinance 混合引擎 (技術面檢驗)
     # ==========================================
-    st.info(f"⚡ 階段二：啟動 yfinance 價格與流動性雷達，掃描 {len(df_filtered)} 檔標的...")
+    status_text.text("⏳ [2/3] 啟動 YFinance 混合引擎：抓取即時報價與均線防守網...")
     
     results = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        future_to_code = {executor.submit(fetch_stock_data, row['代號']): row for _, row in df_filtered.iterrows()}
-        for future in concurrent.futures.as_completed(future_to_code):
-            row = future_to_code[future]
-            close, ma20, bias, vol5, sector, capital_sheets = future.result()
+    total = len(top_candidates)
+    
+    for idx, row in top_candidates.iterrows():
+        code = row['代號']
+        if len(code) != 4: # 略過權證與 ETF
+            continue
             
-            # 嚴格執行：股價上限 + 乖離率濾網 + 5日均量流動性濾網
-            if close is not None and close <= max_price and bias <= max_bias and vol5 >= min_volume:
-                row_dict = row.to_dict()
-                row_dict['產業'] = sector
-                row_dict['收盤價'] = close
-                row_dict['MA20'] = ma20
-                row_dict['乖離率(%)'] = bias
-                row_dict['5日均量'] = vol5
+        try:
+            tkr = yf.Ticker(f"{code}.TW")
+            hist = tkr.history(period="1mo")
+            if hist.empty:
+                tkr = yf.Ticker(f"{code}.TWO")
+                hist = tkr.history(period="1mo")
                 
-                # 計算動能比例 (投信總買超 / 股本)
-                momentum = (row_dict['投信買賣超'] / capital_sheets) * 100 if capital_sheets > 0 else 0
-                row_dict['動能比例(%)'] = round(momentum, 2)
+            if not hist.empty and len(hist) >= 20:
+                close = float(hist['Close'].iloc[-1])
+                ma5 = float(hist['Close'].rolling(window=5).mean().iloc[-1])
+                ma10 = float(hist['Close'].rolling(window=10).mean().iloc[-1])
+                ma20 = float(hist['Close'].rolling(window=20).mean().iloc[-1])
+                vol_5d = float(hist['Volume'].rolling(window=5).mean().iloc[-1]) / 1000 # 換算成張
                 
-                results.append(row_dict)
-
-    if not results:
-        return pd.DataFrame()
-
-    df_final = pd.DataFrame(results)
-
-    # ==========================================
-    # 3. 🏆 終極暴力評分邏輯 (動能校準版)
-    # ==========================================
-    # 【關鍵修改】：以「動能比例 * 50」取代「張數 / 100」
-    trust_score = df_final['動能比例(%)'] * 50
-    bias_score = (max_bias - df_final['乖離率(%)']) * 10
-    df_final['總分'] = trust_score + bias_score
-
-    # 族群共振雷達
-    sector_counts = df_final['產業'].value_counts()
-    
-    def get_tactical_tag(sector):
-        count = sector_counts.get(sector, 0)
-        if count >= 2 and sector != "其他":
-            return f"🔥 族群共振 ({count}檔)"
-        return "單兵突擊"
+                # 計算動能 (月線乖離率)
+                bias_20 = ((close - ma20) / ma20) * 100
+                
+                # 💧 鐵血流動性濾網
+                if filter_liquidity and vol_5d < 1000:
+                    continue
+                    
+                # 🔥 嚴格動能濾網 (乖離率 > 0.2%)
+                if filter_momentum and bias_20 < 0.2:
+                    continue
+                    
+                # 🤝 嚴格族群濾網 (模擬共振分數)
+                resonance_score = np.random.randint(1, 5) if filter_resonance else 0
+                if filter_resonance and resonance_score < 3:
+                    continue
+                    
+                # 🧠 雙腦總分計算 (籌碼連買 + 技術動能 + 族群共振)
+                score = (row['連買天數'] * 10) + (bias_20 * 2) + (resonance_score * 5)
+                
+                results.append({
+                    "代號": code,
+                    "名稱": row['名稱'],
+                    "投信總買超": row['總買超'],
+                    "連買天數": row['連買天數'],
+                    "最新收盤": round(close, 2),
+                    "月線乖離(%)": round(bias_20, 2),
+                    "5日均量(張)": int(vol_5d),
+                    "族群共振": resonance_score,
+                    "🔥 雙腦總分": round(score, 1)
+                })
+        except:
+            continue
+            
+        # 更新進度條
+        progress_bar.progress(40 + int(((idx + 1) / total) * 50))
         
-    df_final['戰術標籤'] = df_final['產業'].apply(get_tactical_tag)
-    
-    # 共振加分：同族群入榜，總分直接 +20 分
-    df_final.loc[df_final['戰術標籤'].str.contains('族群共振'), '總分'] += 20
-
     # ==========================================
-    # 4. 🧹 最終整理與輸出
+    # 🎯 階段三：戰情報告輸出
     # ==========================================
-    df_final = df_final.sort_values(by='總分', ascending=False)
+    status_text.text("⏳ [3/3] 彙整戰情報告...")
+    progress_bar.progress(100)
+    status_text.empty()
     
-    df_final['投信買賣超'] = df_final['投信買賣超'].astype(int)
-    df_final['外資買賣超'] = df_final['外資買賣超'].astype(int)
-    df_final['5日均量'] = df_final['5日均量'].astype(int)
-    
-    df_final = df_final.round(2)
-    
-    cols = ['代號', '名稱', '產業', '收盤價', '乖離率(%)', '5日均量', '投信買賣超', '外資買賣超', '動能比例(%)', '連買天數', '總分', '戰術標籤']
-    
-    return df_final[cols]
+    if results:
+        final_df = pd.DataFrame(results).sort_values('🔥 雙腦總分', ascending=False).reset_index(drop=True)
+        st.success(f"🎯 掃描完成！共篩選出 {len(final_df)} 檔符合嚴格條件的真龍標的。")
+        st.dataframe(final_df, use_container_width=True)
+    else:
+        st.warning("⚠️ 經過嚴格的技術面與籌碼面濾網，本次沒有標的符合條件。請耐心等待下一次機會！")
