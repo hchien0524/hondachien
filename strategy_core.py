@@ -2,31 +2,31 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import numpy as np
+import io
 
 def load_and_clean_csv(file):
-    """強健的 CSV 讀取器：自動尋找真實標題列，破解證交所/櫃買中心的雜訊列"""
-    encodings = ['utf-8', 'big5-hkscs', 'cp950', 'utf-8-sig']
+    """終極強健版：直接讀取純文字，避開 Pandas 的欄位不對齊錯誤"""
+    encodings = ['big5-hkscs', 'cp950', 'utf-8', 'utf-8-sig']
+    file_bytes = file.getvalue() # 取得上傳檔案的二進位資料
+    
     for enc in encodings:
         try:
-            file.seek(0)
-            # 先不預設標題列，全部讀成字串
-            df = pd.read_csv(file, encoding=enc, header=None, dtype=str)
+            text = file_bytes.decode(enc)
+            lines = text.split('\n')
             
-            # 往下找前 5 列，看哪一列包含「代號」
+            # 往下找前 15 列，看哪一列包含「代號」
             header_idx = -1
-            for i in range(min(5, len(df))):
-                row_str = "".join(df.iloc[i].fillna('').astype(str).tolist())
-                if '代號' in row_str or '證券代號' in row_str:
+            for i, line in enumerate(lines[:15]):
+                if '代號' in line or '證券代號' in line:
                     header_idx = i
                     break
             
             if header_idx != -1:
-                # 設定正確的標題列
-                df.columns = df.iloc[header_idx]
-                # 刪除標題列以上的雜訊
-                df = df.iloc[header_idx+1:].reset_index(drop=True)
-                # 清除欄位名稱可能包含的空白或換行
-                df.columns = df.columns.astype(str).str.strip().str.replace('\n', '').str.replace('\r', '')
+                # 從真正的標題列開始，重新組合成 CSV 格式
+                csv_data = '\n'.join(lines[header_idx:])
+                df = pd.read_csv(io.StringIO(csv_data), dtype=str, skipinitialspace=True)
+                # 清理標題列的空白與引號
+                df.columns = df.columns.str.strip().str.replace('"', '').str.replace(' ', '')
                 return df
         except:
             continue
@@ -51,14 +51,19 @@ def run_radar(uploaded_csvs, filter_momentum, filter_resonance, filter_liquidity
     status_text.text("⏳ [1/3] 執行 CSV 內部迴圈：解析法人籌碼與連買天數...")
     
     all_data = []
+    debug_cols = [] # 用來收集欄位名稱以供除錯
+    
     for file in uploaded_csvs:
         df = load_and_clean_csv(file)
         if df is None:
             continue
             
-        col_code = find_column(df, ['代號', 'Code', '證券代號'])
-        col_name = find_column(df, ['名稱', 'Name', '證券名稱'])
-        col_trust = find_column(df, ['投信買賣超', '投信買超'])
+        debug_cols.append(list(df.columns))
+        
+        col_code = find_column(df, ['證券代號', '代號', 'Code'])
+        col_name = find_column(df, ['證券名稱', '名稱', 'Name'])
+        # 擴充投信買賣超的關鍵字，涵蓋櫃買中心的 "投信-買賣超"
+        col_trust = find_column(df, ['投信買賣超', '投信-買賣超', '投信買超'])
         
         if col_code and col_trust:
             # 清理代號格式 (去除 =, " 等雜訊)
@@ -71,7 +76,9 @@ def run_radar(uploaded_csvs, filter_momentum, filter_resonance, filter_liquidity
             all_data.append(temp_df)
             
     if not all_data:
-        st.error("❌ CSV 解析失敗：找不到『代號』或『投信買賣超』欄位。請確認檔案為證交所/櫃買中心下載的三大法人買賣超 CSV。")
+        st.error("❌ CSV 解析失敗：找不到『代號』或『投信買賣超』欄位。")
+        if debug_cols:
+            st.warning(f"🛠️ 【系統除錯資訊】我讀到的欄位有：{debug_cols[0][:10]}... 請確認是否包含投信買賣超數據。")
         return
         
     merged_df = pd.concat(all_data)
