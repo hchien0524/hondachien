@@ -3,7 +3,6 @@ import pandas as pd
 import json
 import portfolio_monitor
 
-# 嘗試載入核心策略與回測引擎
 try:
     import strategy_core
 except ImportError:
@@ -14,22 +13,16 @@ try:
 except ImportError:
     backtest_engine = None
 
-# ==========================================
-# ⚙️ 系統全域設定
-# ==========================================
 st.set_page_config(
-    page_title="HIOS Wave Radar V27.1",
+    page_title="HIOS Wave Radar V27.2",
     page_icon="🎯",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 def main():
-    # ==========================================
-    # 🎛️ 左側邊欄 (Sidebar) 控制中心
-    # ==========================================
     st.sidebar.title("🎯 HIOS Wave Radar")
-    st.sidebar.caption("V27.1 輕量化量化交易系統")
+    st.sidebar.caption("V27.2 動態參數升級版")
     
     st.sidebar.header("📂 1. 數據引擎")
     uploaded_csvs = st.sidebar.file_uploader(
@@ -38,21 +31,18 @@ def main():
         accept_multiple_files=True
     )
     
-    st.sidebar.header("⚙️ 2. 嚴格濾網設定")
-    filter_momentum = st.sidebar.checkbox("🔥 嚴格動能濾網 (動能 > 0.2%)", value=True)
+    # 【關鍵升級】：將死板的打勾改成動態數值輸入，預設帶入時光機的最佳參數
+    st.sidebar.header("⚙️ 2. 動態濾網設定")
+    filter_vol_min = st.sidebar.number_input("💧 5日均量下限 (張)", min_value=0, max_value=20000, value=3000, step=500, help="過濾掉流動性差的冷門股")
+    filter_bias_max = st.sidebar.number_input("🔥 月線乖離率上限 (%)", min_value=1.0, max_value=50.0, value=5.0, step=0.5, help="拒絕追高，過濾掉漲多乖離過大的危險股")
     filter_resonance = st.sidebar.checkbox("🤝 嚴格族群濾網 (共振 >= 3)", value=True)
-    filter_liquidity = st.sidebar.checkbox("💧 鐵血流動性 (5日均量 > 1000)", value=True)
     
-    # ==========================================
-    # 💾 3. 戰情包管理區塊 (JSON 存取)
-    # ==========================================
     st.sidebar.markdown("---")
     st.sidebar.header("💾 3. 戰情包管理")
 
     if 'portfolio' not in st.session_state:
         st.session_state['portfolio'] = []
 
-    # (A) 儲存最新戰情包
     if len(st.session_state['portfolio']) > 0:
         portfolio_json = json.dumps(st.session_state['portfolio'], ensure_ascii=False, indent=2)
         st.sidebar.download_button(
@@ -65,7 +55,6 @@ def main():
     else:
         st.sidebar.button("⬇️ 儲存最新戰情包", disabled=True, help="目前沒有持股可供儲存", use_container_width=True)
 
-    # (B) 載入本機戰情包
     uploaded_file = st.sidebar.file_uploader("⬆️ 載入本機戰情包 (.json)", type=['json'])
     if uploaded_file is not None:
         try:
@@ -77,12 +66,8 @@ def main():
         except Exception as e:
             st.sidebar.error("檔案解析失敗，請確認是否為正確的 JSON 檔。")
 
-    # ==========================================
-    # 🖥️ 主畫面三分頁 (Tabs)
-    # ==========================================
     tab1, tab2, tab3 = st.tabs(["🚀 雷達掃描室", "🛡️ 持股監控中心", "⏳ 時光膠囊 (AI 回測)"])
     
-    # --- 分頁 1：雷達掃描室 ---
     with tab1:
         st.header("🚀 雷達掃描室 (雙腦評分系統)")
         if uploaded_csvs and len(uploaded_csvs) > 0:
@@ -91,7 +76,8 @@ def main():
                 if strategy_core:
                     try:
                         with st.spinner("📡 正在執行 CSV 內部迴圈與籌碼動能分析..."):
-                            strategy_core.run_radar(uploaded_csvs, filter_momentum, filter_resonance, filter_liquidity)
+                            # 傳入動態參數
+                            strategy_core.run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min)
                     except Exception as e:
                         st.error(f"雷達運算發生錯誤: {e}")
                 else:
@@ -99,14 +85,12 @@ def main():
         else:
             st.info("👈 請先從左側邊欄上傳「法人買賣超 CSV (可多選)」以啟動雷達。")
             
-    # --- 分頁 2：持股監控中心 ---
     with tab2:
         portfolio_monitor.render_portfolio_monitor()
 
-    # --- 分頁 3：時光膠囊 (AI 回測) ---
     with tab3:
         st.header("⏳ 時光膠囊 (AI 參數網格搜索)")
-        st.caption("回到過去特定日期，尋找當下勝率最高的最佳參數組合 (如: 成交量 > 2000, 乖離率 < 5%)。")
+        st.caption("回到過去特定日期，尋找當下勝率最高的最佳參數組合。")
         
         col_t1, col_t2 = st.columns(2)
         with col_t1:
@@ -117,7 +101,6 @@ def main():
             if st.button("啟動 AI 網格搜索", use_container_width=True):
                 if backtest_engine:
                     with st.spinner(f"🕰️ 正在啟動時光機，回到 {target_date} 進行參數最佳化..."):
-                        # 這裡已經完美對齊，且移除了多餘的 st.success
                         backtest_engine.run_grid_search(target_date)
                 else:
                     st.warning("⚠️ 找不到 `backtest_engine.py`，請確認回測引擎檔案存在。")
