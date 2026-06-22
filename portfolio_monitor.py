@@ -12,11 +12,9 @@ def fetch_stock_name(code):
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64 ) AppleWebKit/537.36'}
         res = requests.get(url, headers=headers, timeout=5)
         if res.status_code == 200:
-            # 改抓 <title> 標籤，格式通常為 "台玻(1802) - 股價走勢 - Yahoo奇摩股市"
             match = re.search(r'<title>([^<]+)</title>', res.text)
             if match:
                 title_text = match.group(1)
-                # 以左括號 '(' 作為切割點，精準取出前面的股名
                 name = title_text.split('(')[0].strip()
                 if name and "Yahoo" not in name:
                     return name
@@ -42,8 +40,8 @@ def get_stock_tech(code):
     return None, None, None, None
 
 def render_portfolio_monitor():
-    st.header("🛡️ V27 持股監控中心 (戰情卡片版)")
-    st.caption("全自動追蹤陣地，危險持股強制置頂，嚴格執行波段防守紀律。")
+    st.header("🛡️ V27.1 持股監控中心 (嚴格防守版)")
+    st.caption("導入絕對停損與月線趨勢過濾，拒絕死貓反彈，嚴格執行波段紀律。")
     
     if 'portfolio' not in st.session_state:
         st.session_state['portfolio'] = []
@@ -64,7 +62,6 @@ def render_portfolio_monitor():
                     if exists:
                         st.warning(f"⚠️ {new_code} 已經在監控名單中了！")
                     else:
-                        # 呼叫爬蟲抓取真實股名
                         real_name = fetch_stock_name(new_code)
                         st.session_state['portfolio'].append({
                             "代號": new_code,
@@ -82,7 +79,7 @@ def render_portfolio_monitor():
         st.info("💡 目前沒有持股紀錄。請在上方手動新增，或從雷達室收編真龍。")
         return
 
-    # --- 2. 背景運算與風險排序 (危險置頂演算法) ---
+    # --- 2. 背景運算與風險排序 (多維度防守演算法) ---
     analyzed_portfolio = []
     total_cost_amt = 0.0
     total_value_amt = 0.0
@@ -98,7 +95,6 @@ def render_portfolio_monitor():
             
             close, ma5, ma10, ma20 = get_stock_tech(code)
             
-            # 狀態判定與給分 (分數越高越危險，排越上面)
             priority_score = 0
             status_html = ""
             ret_pct = 0.0
@@ -108,7 +104,16 @@ def render_portfolio_monitor():
                 total_cost_amt += cost
                 total_value_amt += close
                 
-                if close < ma10:
+                # 【核心升級】：多維度嚴格防守邏輯
+                if ret_pct <= -5.0:
+                    priority_score = 5
+                    status_html = "<span style='color:#ff3333; font-weight:bold;'>💀 觸及停損 (帳損逾5%)</span>"
+                    red_lights += 1
+                elif close < ma20:
+                    priority_score = 4
+                    status_html = "<span style='color:#ff3333; font-weight:bold;'>🔴 跌破月線 (弱勢反彈/空頭)</span>"
+                    red_lights += 1
+                elif close < ma10:
                     priority_score = 3
                     status_html = "<span style='color:#ff3333; font-weight:bold;'>🔴 破線撤退 (跌破10MA)</span>"
                     red_lights += 1
@@ -118,10 +123,10 @@ def render_portfolio_monitor():
                     yellow_lights += 1
                 else:
                     priority_score = 1
-                    status_html = "<span style='color:#00cc66; font-weight:bold;'>🟢 強勢續抱 (站穩5MA)</span>"
+                    status_html = "<span style='color:#00cc66; font-weight:bold;'>🟢 強勢續抱 (多頭排列)</span>"
                     green_lights += 1
             else:
-                priority_score = 0 # 連線失敗放最下面
+                priority_score = 0 
                 status_html = "⚪ 連線中或無報價"
 
             analyzed_portfolio.append({
@@ -130,7 +135,6 @@ def render_portfolio_monitor():
                 "ret_pct": ret_pct, "priority": priority_score, "status_html": status_html
             })
 
-    # 依據危險程度排序 (紅燈 -> 黃燈 -> 綠燈)
     analyzed_portfolio.sort(key=lambda x: x['priority'], reverse=True)
 
     # --- 3. 高階投資組合儀表板 ---
