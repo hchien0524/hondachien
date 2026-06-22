@@ -5,7 +5,6 @@ import numpy as np
 import io
 
 def load_and_clean_csv(file):
-    """終極強健版：直接讀取純文字，避開 Pandas 的欄位不對齊錯誤"""
     encodings = ['big5-hkscs', 'cp950', 'utf-8', 'utf-8-sig']
     file_bytes = file.getvalue() 
     
@@ -36,14 +35,12 @@ def find_column(df, keywords):
                 return col
     return None
 
-def run_radar(uploaded_csvs, filter_momentum, filter_resonance, filter_liquidity):
-    st.markdown("### 🧠 V27 雙腦評分雷達運算中...")
+# 【關鍵升級】：接收 filter_bias_max 與 filter_vol_min
+def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
+    st.markdown("### 🧠 V27.2 雙腦評分雷達運算中...")
     progress_bar = st.progress(0)
     status_text = st.empty()
     
-    # ==========================================
-    # 📂 階段一：CSV 內部迴圈 (籌碼面解析)
-    # ==========================================
     status_text.text("⏳ [1/3] 執行 CSV 內部迴圈：解析法人籌碼與連買天數...")
     
     all_data = []
@@ -70,8 +67,6 @@ def run_radar(uploaded_csvs, filter_momentum, filter_resonance, filter_liquidity
             
     if not all_data:
         st.error("❌ CSV 解析失敗：找不到『代號』或『投信買賣超』欄位。")
-        if debug_cols:
-            st.warning(f"🛠️ 【系統除錯資訊】我讀到的欄位有：{debug_cols[0][:10]}... 請確認是否包含投信買賣超數據。")
         return
         
     merged_df = pd.concat(all_data)
@@ -85,15 +80,11 @@ def run_radar(uploaded_csvs, filter_momentum, filter_resonance, filter_liquidity
     top_candidates = summary_df[summary_df['總買超'] > 0].sort_values('總買超', ascending=False).head(30)
     progress_bar.progress(40)
     
-    # ==========================================
-    # 📡 階段二：YFinance 混合引擎 (技術面檢驗)
-    # ==========================================
     status_text.text("⏳ [2/3] 啟動 YFinance 混合引擎：抓取即時報價與均線防守網...")
     
     results = []
     total = len(top_candidates)
     
-    # 【關鍵修復】：使用 enumerate 來取得正確的迴圈次數 (i)，避免使用 Pandas 的原始 index
     for i, (idx, row) in enumerate(top_candidates.iterrows()):
         code = row['代號']
         if len(code) != 4: 
@@ -115,10 +106,12 @@ def run_radar(uploaded_csvs, filter_momentum, filter_resonance, filter_liquidity
                 
                 bias_20 = ((close - ma20) / ma20) * 100
                 
-                if filter_liquidity and vol_5d < 1000:
+                # 💧 動態流動性濾網 (套用時光機參數)
+                if vol_5d < filter_vol_min:
                     continue
                     
-                if filter_momentum and bias_20 < 0.2:
+                # 🔥 動態動能濾網 (乖離率需 > 0.2 確保起漲，且 < 上限確保不追高)
+                if bias_20 < 0.2 or bias_20 > filter_bias_max:
                     continue
                     
                 resonance_score = np.random.randint(1, 5) if filter_resonance else 0
@@ -141,12 +134,8 @@ def run_radar(uploaded_csvs, filter_momentum, filter_resonance, filter_liquidity
         except:
             continue
             
-        # 使用 i (0, 1, 2...) 來計算進度，確保永遠在 40~90 之間
         progress_bar.progress(40 + int(((i + 1) / total) * 50))
         
-    # ==========================================
-    # 🎯 階段三：戰情報告輸出
-    # ==========================================
     status_text.text("⏳ [3/3] 彙整戰情報告...")
     progress_bar.progress(100)
     status_text.empty()
