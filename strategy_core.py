@@ -35,24 +35,20 @@ def find_column(df, keywords):
                 return col
     return None
 
-# 【關鍵升級】：接收 filter_bias_max 與 filter_vol_min
 def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
-    st.markdown("### 🧠 V27.2 雙腦評分雷達運算中...")
+    st.markdown("### 🧠 V27.3 純淨邏輯雷達運算中 (解除封印版)...")
     progress_bar = st.progress(0)
     status_text = st.empty()
     
-    status_text.text("⏳ [1/3] 執行 CSV 內部迴圈：解析法人籌碼與連買天數...")
+    status_text.text("⏳ [1/3] 執行 CSV 內部迴圈：解析所有法人籌碼...")
     
     all_data = []
-    debug_cols = [] 
     
     for file in uploaded_csvs:
         df = load_and_clean_csv(file)
         if df is None:
             continue
             
-        debug_cols.append(list(df.columns))
-        
         col_code = find_column(df, ['證券代號', '代號', 'Code'])
         col_name = find_column(df, ['證券名稱', '名稱', 'Name'])
         col_trust = find_column(df, ['投信買賣超', '投信-買賣超', '投信買超'])
@@ -77,10 +73,12 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
         連買天數=('買超天數', 'sum')
     ).reset_index()
     
-    top_candidates = summary_df[summary_df['總買超'] > 0].sort_values('總買超', ascending=False).head(30)
-    progress_bar.progress(40)
+    # 【關鍵修正 1】：解除 30 檔封印，掃描所有投信有買的股票！
+    top_candidates = summary_df[summary_df['總買超'] > 0].copy()
+    progress_bar.progress(20)
     
-    status_text.text("⏳ [2/3] 啟動 YFinance 混合引擎：抓取即時報價與均線防守網...")
+    # 因為掃描數量變多，提示使用者稍候
+    status_text.text(f"⏳ [2/3] 啟動 YFinance 引擎：檢驗 {len(top_candidates)} 檔標的 (需時較長，請稍候)...")
     
     results = []
     total = len(top_candidates)
@@ -99,26 +97,27 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
                 
             if not hist.empty and len(hist) >= 20:
                 close = float(hist['Close'].iloc[-1])
-                ma5 = float(hist['Close'].rolling(window=5).mean().iloc[-1])
-                ma10 = float(hist['Close'].rolling(window=10).mean().iloc[-1])
                 ma20 = float(hist['Close'].rolling(window=20).mean().iloc[-1])
                 vol_5d = float(hist['Volume'].rolling(window=5).mean().iloc[-1]) / 1000 
                 
                 bias_20 = ((close - ma20) / ma20) * 100
                 
-                # 💧 動態流動性濾網 (套用時光機參數)
+                # 💧 動態流動性濾網
                 if vol_5d < filter_vol_min:
                     continue
                     
-                # 🔥 動態動能濾網 (乖離率需 > 0.2 確保起漲，且 < 上限確保不追高)
-                if bias_20 < 0.2 or bias_20 > filter_bias_max:
+                # 🔥 動態動能濾網 (只要站上月線 bias_20 > 0 即可，且小於上限)
+                if bias_20 < 0.0 or bias_20 > filter_bias_max:
                     continue
                     
-                resonance_score = np.random.randint(1, 5) if filter_resonance else 0
-                if filter_resonance and resonance_score < 3:
-                    continue
-                    
-                score = (row['連買天數'] * 10) + (bias_20 * 2) + (resonance_score * 5)
+                # 【關鍵修正 2】：暫時關閉亂數共振干擾
+                resonance_score = "暫停(建置中)"
+                
+                # 【關鍵修正 3】：防禦優先計分法 (乖離越低，分數越高)
+                # 公式：(連買天數 * 15) + ((設定的乖離上限 - 實際乖離) * 3)
+                bias_score = (filter_bias_max - bias_20) * 3
+                trust_score = row['連買天數'] * 15
+                score = trust_score + bias_score
                 
                 results.append({
                     "代號": code,
@@ -132,9 +131,10 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
                     "🔥 雙腦總分": round(score, 1)
                 })
         except:
-            continue
+            pass
             
-        progress_bar.progress(40 + int(((i + 1) / total) * 50))
+        # 更新進度條 (20 ~ 95)
+        progress_bar.progress(20 + int(((i + 1) / total) * 75))
         
     status_text.text("⏳ [3/3] 彙整戰情報告...")
     progress_bar.progress(100)
@@ -142,7 +142,7 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
     
     if results:
         final_df = pd.DataFrame(results).sort_values('🔥 雙腦總分', ascending=False).reset_index(drop=True)
-        st.success(f"🎯 掃描完成！共篩選出 {len(final_df)} 檔符合嚴格條件的真龍標的。")
+        st.success(f"🎯 掃描完成！共篩選出 {len(final_df)} 檔符合條件的標的。")
         st.dataframe(final_df, use_container_width=True)
     else:
-        st.warning("⚠️ 經過嚴格的技術面與籌碼面濾網，本次沒有標的符合條件。請耐心等待下一次機會！")
+        st.warning("⚠️ 經過嚴格的技術面與籌碼面濾網，本次沒有標的符合條件。")
