@@ -107,21 +107,28 @@ def main():
 
                         if not df_results.empty:
                             # ---------------------------------------------------------
-                            # 🛡️ V27 鐵血濾網執行區
+                            # 🛡️ V27 防彈濾網執行區 (動態模糊比對)
                             # ---------------------------------------------------------
                             df_display = df_results.copy()
                             
-                            if strict_momentum and '動能比例' in df_display.columns:
-                                df_display = df_display[df_display['動能比例'] > 0.2]
-                                
-                            if strict_resonance and '戰術標籤' in df_display.columns:
-                                def check_resonance(tag):
-                                    if '族群共振' in str(tag):
-                                        match = re.search(r'\((\d+)檔\)', str(tag))
-                                        if match:
-                                            return int(match.group(1)) >= 3
-                                    return False
-                                df_display = df_display[df_display['戰術標籤'].apply(check_resonance)]
+                            if strict_momentum:
+                                # 模糊比對尋找動能欄位，並強制轉為數字
+                                mom_col = next((c for c in df_display.columns if '動能' in c), None)
+                                if mom_col:
+                                    df_display[mom_col] = pd.to_numeric(df_display[mom_col], errors='coerce')
+                                    df_display = df_display[df_display[mom_col] > 0.2]
+                                    
+                            if strict_resonance:
+                                # 模糊比對尋找標籤欄位
+                                tag_col = next((c for c in df_display.columns if '標籤' in c or '戰術' in c), None)
+                                if tag_col:
+                                    def check_resonance(tag):
+                                        if '族群共振' in str(tag):
+                                            match = re.search(r'\((\d+)檔\)', str(tag))
+                                            if match:
+                                                return int(match.group(1)) >= 3
+                                        return False
+                                    df_display = df_display[df_display[tag_col].apply(check_resonance)]
                             
                             if df_display.empty:
                                 st.warning("⚠️ 原始名單有股票，但被「高階勝率濾網」全數無情秒殺！請放寬濾網或等待更好的時機。")
@@ -133,7 +140,7 @@ def main():
                                 # 🛡️ 安全的動態格式化 (防 KeyError 閃退)
                                 format_dict = {}
                                 for col in df_display.columns:
-                                    if col in ["收盤價", "乖離率(%)", "動能比例", "總分"]:
+                                    if col in ["收盤價", "乖離率(%)", "總分"] or "動能" in col:
                                         format_dict[col] = "{:.2f}"
                                     elif col in ["投信買賣超", "外資買賣超", "連買天數"] or "均量" in col:
                                         format_dict[col] = "{:.0f}"
@@ -142,8 +149,12 @@ def main():
                                 
                                 if '總分' in df_display.columns:
                                     styled_df = styled_df.bar(subset=['總分'], color='#00cc66', vmin=0)
-                                if '動能比例' in df_display.columns:
-                                    styled_df = styled_df.bar(subset=['動能比例'], color='#ff9900', vmin=0)
+                                
+                                # 動態尋找動能欄位畫進度條
+                                mom_col = next((c for c in df_display.columns if '動能' in c), None)
+                                if mom_col:
+                                    styled_df = styled_df.bar(subset=[mom_col], color='#ff9900', vmin=0)
+                                    
                                 if '乖離率(%)' in df_display.columns:
                                     styled_df = styled_df.background_gradient(cmap='RdYlGn_r', subset=['乖離率(%)'])
                                 
