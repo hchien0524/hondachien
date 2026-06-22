@@ -47,7 +47,7 @@ def fetch_stock_data(code):
 
 def calculate_scores(df, min_trust, max_bias, max_price, min_volume, finmind_token=""):
     """
-    終極 CSV 內循環引擎：徹底拔除 FinMind，解決重複股票問題，自帶動能與天數計算
+    終極 CSV 內循環引擎：動能校準版 (以動能比例取代絕對張數計分)
     """
     if df.empty:
         return pd.DataFrame()
@@ -103,10 +103,10 @@ def calculate_scores(df, min_trust, max_bias, max_price, min_volume, finmind_tok
     df_final = pd.DataFrame(results)
 
     # ==========================================
-    # 3. 🏆 終極暴力評分邏輯
+    # 3. 🏆 終極暴力評分邏輯 (動能校準版)
     # ==========================================
-    # 基礎分：籌碼張數 (100張=1分) + 低乖離加分
-    trust_score = df_final['投信買賣超'] / 100
+    # 【關鍵修改】：以「動能比例 * 50」取代「張數 / 100」
+    trust_score = df_final['動能比例(%)'] * 50
     bias_score = (max_bias - df_final['乖離率(%)']) * 10
     df_final['總分'] = trust_score + bias_score
 
