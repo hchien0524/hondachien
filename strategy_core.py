@@ -3,8 +3,37 @@ import pandas as pd
 import yfinance as yf
 import numpy as np
 
+def load_and_clean_csv(file):
+    """強健的 CSV 讀取器：自動尋找真實標題列，破解證交所/櫃買中心的雜訊列"""
+    encodings = ['utf-8', 'big5-hkscs', 'cp950', 'utf-8-sig']
+    for enc in encodings:
+        try:
+            file.seek(0)
+            # 先不預設標題列，全部讀成字串
+            df = pd.read_csv(file, encoding=enc, header=None, dtype=str)
+            
+            # 往下找前 5 列，看哪一列包含「代號」
+            header_idx = -1
+            for i in range(min(5, len(df))):
+                row_str = "".join(df.iloc[i].fillna('').astype(str).tolist())
+                if '代號' in row_str or '證券代號' in row_str:
+                    header_idx = i
+                    break
+            
+            if header_idx != -1:
+                # 設定正確的標題列
+                df.columns = df.iloc[header_idx]
+                # 刪除標題列以上的雜訊
+                df = df.iloc[header_idx+1:].reset_index(drop=True)
+                # 清除欄位名稱可能包含的空白或換行
+                df.columns = df.columns.astype(str).str.strip().str.replace('\n', '').str.replace('\r', '')
+                return df
+        except:
+            continue
+    return None
+
 def find_column(df, keywords):
-    """智慧尋找 CSV 中的關鍵欄位 (相容不同券商/交易所格式)"""
+    """智慧尋找 CSV 中的關鍵欄位"""
     for col in df.columns:
         for kw in keywords:
             if kw in str(col):
@@ -23,29 +52,26 @@ def run_radar(uploaded_csvs, filter_momentum, filter_resonance, filter_liquidity
     
     all_data = []
     for file in uploaded_csvs:
-        try:
-            try:
-                df = pd.read_csv(file, encoding='utf-8')
-            except:
-                file.seek(0)
-                df = pd.read_csv(file, encoding='big5-hkscs', thousands=',')
+        df = load_and_clean_csv(file)
+        if df is None:
+            continue
             
-            col_code = find_column(df, ['代號', 'Code', '證券代號'])
-            col_name = find_column(df, ['名稱', 'Name', '證券名稱'])
-            col_trust = find_column(df, ['投信買賣超', '投信買超'])
+        col_code = find_column(df, ['代號', 'Code', '證券代號'])
+        col_name = find_column(df, ['名稱', 'Name', '證券名稱'])
+        col_trust = find_column(df, ['投信買賣超', '投信買超'])
+        
+        if col_code and col_trust:
+            # 清理代號格式 (去除 =, " 等雜訊)
+            df[col_code] = df[col_code].astype(str).str.replace('=', '').str.replace('"', '').str.strip()
+            # 清理買賣超數字 (去除逗號，轉為數值)
+            df[col_trust] = pd.to_numeric(df[col_trust].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
             
-            if col_code and col_trust:
-                df[col_code] = df[col_code].astype(str).str.replace('=', '').str.replace('"', '').str.strip()
-                df[col_trust] = pd.to_numeric(df[col_trust].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
-                
-                temp_df = df[[col_code, col_name, col_trust]].copy()
-                temp_df.columns = ['代號', '名稱', '投信買賣超']
-                all_data.append(temp_df)
-        except Exception as e:
-            pass
+            temp_df = df[[col_code, col_name, col_trust]].copy()
+            temp_df.columns = ['代號', '名稱', '投信買賣超']
+            all_data.append(temp_df)
             
     if not all_data:
-        st.error("❌ CSV 解析失敗：找不到『代號』或『投信買賣超』欄位。")
+        st.error("❌ CSV 解析失敗：找不到『代號』或『投信買賣超』欄位。請確認檔案為證交所/櫃買中心下載的三大法人買賣超 CSV。")
         return
         
     merged_df = pd.concat(all_data)
