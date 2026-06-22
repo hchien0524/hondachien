@@ -101,9 +101,9 @@ def fetch_finmind_data(code, today_trust_buy, token):
     except Exception as e:
         return 0.0, 0
 
-def calculate_scores(df, min_trust, max_bias, min_volume, finmind_token=""):
+def calculate_scores(df, min_trust, max_bias, max_price, min_volume, finmind_token=""):
     """
-    終極暴力評分核心：結合流動性濾網、族群共振與智慧回溯籌碼
+    終極暴力評分核心：結合流動性濾網、股價上限、族群共振與智慧回溯籌碼
     """
     # 1. 初步濾網：投信買超必須大於設定下限
     df_filtered = df[df['投信買賣超'] >= min_trust].copy()
@@ -121,8 +121,8 @@ def calculate_scores(df, min_trust, max_bias, min_volume, finmind_token=""):
             row = future_to_code[future]
             close, ma20, bias, vol5, sector = future.result()
             
-            # 嚴格執行：乖離率濾網 + 5日均量流動性濾網
-            if close is not None and bias <= max_bias and vol5 >= min_volume:
+            # 嚴格執行：股價上限 + 乖離率濾網 + 5日均量流動性濾網
+            if close is not None and close <= max_price and bias <= max_bias and vol5 >= min_volume:
                 row_dict = row.to_dict()
                 row_dict['產業'] = sector
                 row_dict['收盤價'] = close
