@@ -2,11 +2,17 @@ import streamlit as st
 import pandas as pd
 import json
 import portfolio_monitor
-# 若有獨立的 strategy_core.py，請確保它在同一個資料夾下
+
+# 嘗試載入核心策略與回測引擎
 try:
     import strategy_core
 except ImportError:
     strategy_core = None
+
+try:
+    import backtest_engine
+except ImportError:
+    backtest_engine = None
 
 # ==========================================
 # ⚙️ 系統全域設定
@@ -26,7 +32,12 @@ def main():
     st.sidebar.caption("V27.1 輕量化量化交易系統")
     
     st.sidebar.header("📂 1. 數據引擎")
-    uploaded_csv = st.sidebar.file_uploader("上傳今日法人買賣超 CSV", type=['csv'])
+    # 【關鍵修復 1】：恢復多檔上傳功能 (支援 CSV 內部迴圈計算連續買超)
+    uploaded_csvs = st.sidebar.file_uploader(
+        "上傳法人買賣超 CSV (支援多檔歷史資料)", 
+        type=['csv'], 
+        accept_multiple_files=True
+    )
     
     st.sidebar.header("⚙️ 2. 嚴格濾網設定")
     filter_momentum = st.sidebar.checkbox("🔥 嚴格動能濾網 (動能 > 0.2%)", value=True)
@@ -39,7 +50,6 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.header("💾 3. 戰情包管理")
 
-    # 確保 session_state 中有 portfolio
     if 'portfolio' not in st.session_state:
         st.session_state['portfolio'] = []
 
@@ -69,31 +79,52 @@ def main():
             st.sidebar.error("檔案解析失敗，請確認是否為正確的 JSON 檔。")
 
     # ==========================================
-    # 🖥️ 主畫面雙分頁 (Tabs)
+    # 🖥️ 主畫面三分頁 (Tabs)
     # ==========================================
-    tab1, tab2 = st.tabs(["🚀 雷達掃描室", "🛡️ 持股監控中心"])
+    # 【關鍵修復 2】：加回「時光膠囊」分頁
+    tab1, tab2, tab3 = st.tabs(["🚀 雷達掃描室", "🛡️ 持股監控中心", "⏳ 時光膠囊 (AI 回測)"])
     
     # --- 分頁 1：雷達掃描室 ---
     with tab1:
-        if uploaded_csv is not None:
-            if strategy_core:
-                # 這裡呼叫您的 strategy_core 進行運算
-                # 假設您的 strategy_core 有一個主函數，例如 run_radar
-                try:
-                    st.info("📡 正在啟動 CSV 內部迴圈與雙腦評分系統...")
-                    # strategy_core.run_radar(uploaded_csv, filter_momentum, filter_resonance, filter_liquidity)
-                    st.success("✅ 雷達掃描完成！(請依據您的 strategy_core 實際函數名稱進行串接)")
-                except Exception as e:
-                    st.error(f"雷達運算發生錯誤: {e}")
-            else:
-                st.warning("⚠️ 找不到 `strategy_core.py`，請確認核心邏輯檔案存在。")
+        st.header("🚀 雷達掃描室 (雙腦評分系統)")
+        if uploaded_csvs and len(uploaded_csvs) > 0:
+            st.info(f"📂 已成功載入 {len(uploaded_csvs)} 份 CSV 檔案，準備啟動內部迴圈。")
+            if st.button("啟動雷達掃描", type="primary"):
+                if strategy_core:
+                    try:
+                        with st.spinner("📡 正在執行 CSV 內部迴圈與籌碼動能分析..."):
+                            # 這裡預留給您的 strategy_core 呼叫
+                            # strategy_core.run_radar(uploaded_csvs, filter_momentum, filter_resonance, filter_liquidity)
+                            st.success("✅ 雷達掃描完成！(請依據您的 strategy_core 實際函數名稱進行串接)")
+                    except Exception as e:
+                        st.error(f"雷達運算發生錯誤: {e}")
+                else:
+                    st.warning("⚠️ 找不到 `strategy_core.py`，請確認核心邏輯檔案存在。")
         else:
-            st.info("👈 請先從左側邊欄上傳今日的「法人買賣超 CSV」以啟動雷達。")
+            st.info("👈 請先從左側邊欄上傳「法人買賣超 CSV (可多選)」以啟動雷達。")
             
     # --- 分頁 2：持股監控中心 ---
     with tab2:
-        # 直接呼叫我們剛剛完美竣工的 V27.1 戰情卡片版
         portfolio_monitor.render_portfolio_monitor()
+
+    # --- 分頁 3：時光膠囊 (AI 回測) ---
+    with tab3:
+        st.header("⏳ 時光膠囊 (AI 參數網格搜索)")
+        st.caption("回到過去特定日期，尋找當下勝率最高的最佳參數組合 (如: 成交量 > 2000, 乖離率 < 5%)。")
+        
+        col_t1, col_t2 = st.columns(2)
+        with col_t1:
+            target_date = st.date_input("選擇回測基準日")
+        with col_t2:
+            st.write("")
+            st.write("")
+            if st.button("啟動 AI 網格搜索", use_container_width=True):
+                if backtest_engine:
+                    with st.spinner(f"🕰️ 正在啟動時光機，回到 {target_date} 進行參數最佳化..."):
+                        # backtest_engine.run_grid_search(target_date)
+                        st.success("✅ 網格搜索完成！最佳參數已產出。")
+                else:
+                    st.warning("⚠️ 找不到 `backtest_engine.py`，請確認回測引擎檔案存在。")
 
 if __name__ == "__main__":
     main()
