@@ -4,6 +4,12 @@ import yfinance as yf
 import numpy as np
 import io
 
+# 嘗試載入 V28 產業字典
+try:
+    from sector_dict import STOCK_SECTOR
+except ImportError:
+    STOCK_SECTOR = {}
+
 def load_and_clean_csv(file):
     encodings = ['big5-hkscs', 'cp950', 'utf-8', 'utf-8-sig']
     file_bytes = file.getvalue() 
@@ -36,7 +42,7 @@ def find_column(df, keywords):
     return None
 
 def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
-    st.markdown("### 🧠 V27.3 純淨邏輯雷達運算中 (解除封印版)...")
+    st.markdown("### 🧠 V28 雙腦評分雷達運算中 (族群共振啟動)...")
     progress_bar = st.progress(0)
     status_text = st.empty()
     
@@ -73,12 +79,19 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
         連買天數=('買超天數', 'sum')
     ).reset_index()
     
-    # 【關鍵修正 1】：解除 30 檔封印，掃描所有投信有買的股票！
     top_candidates = summary_df[summary_df['總買超'] > 0].copy()
-    progress_bar.progress(20)
     
-    # 因為掃描數量變多，提示使用者稍候
-    status_text.text(f"⏳ [2/3] 啟動 YFinance 引擎：檢驗 {len(top_candidates)} 檔標的 (需時較長，請稍候)...")
+    # ==========================================
+    # 🤝 啟動第二大腦：計算族群共振分數
+    # ==========================================
+    # 1. 幫每一檔股票貼上產業標籤
+    top_candidates['所屬族群'] = top_candidates['代號'].map(lambda x: STOCK_SECTOR.get(x, "其他/未分類"))
+    
+    # 2. 計算每個族群在「投信買超名單」中出現的次數
+    sector_counts = top_candidates[top_candidates['所屬族群'] != "其他/未分類"]['所屬族群'].value_counts()
+    
+    progress_bar.progress(20)
+    status_text.text(f"⏳ [2/3] 啟動 YFinance 引擎：檢驗 {len(top_candidates)} 檔標的...")
     
     results = []
     total = len(top_candidates)
@@ -102,22 +115,29 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
                 
                 bias_20 = ((close - ma20) / ma20) * 100
                 
-                # 💧 動態流動性濾網
                 if vol_5d < filter_vol_min:
                     continue
                     
-                # 🔥 動態動能濾網 (只要站上月線 bias_20 > 0 即可，且小於上限)
                 if bias_20 < 0.0 or bias_20 > filter_bias_max:
                     continue
                     
-                # 【關鍵修正 2】：暫時關閉亂數共振干擾
-                resonance_score = "暫停(建置中)"
+                # 取得該股票的族群共振次數 (至少為 1)
+                sector = row['所屬族群']
+                resonance_count = sector_counts.get(sector, 1) if sector != "其他/未分類" else 1
                 
-                # 【關鍵修正 3】：防禦優先計分法 (乖離越低，分數越高)
-                # 公式：(連買天數 * 15) + ((設定的乖離上限 - 實際乖離) * 3)
+                # 🤝 嚴格族群濾網：如果打勾，則強制剔除沒有兄弟股(共振<3)的孤鳥
+                if filter_resonance and resonance_count < 3:
+                    continue
+                    
+                # 🧠 V28 終極計分法：籌碼 + 防禦 + 共振加成
                 bias_score = (filter_bias_max - bias_20) * 3
                 trust_score = row['連買天數'] * 15
-                score = trust_score + bias_score
+                resonance_bonus = resonance_count * 5  # 每多一個兄弟股，加 5 分！
+                
+                score = trust_score + bias_score + resonance_bonus
+                
+                # 為了讓畫面好看，把族群名稱跟共振次數合併顯示
+                display_resonance = f"{sector} ({resonance_count}檔)" if sector != "其他/未分類" else "無共振"
                 
                 results.append({
                     "代號": code,
@@ -127,13 +147,12 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
                     "最新收盤": round(close, 2),
                     "月線乖離(%)": round(bias_20, 2),
                     "5日均量(張)": int(vol_5d),
-                    "族群共振": resonance_score,
+                    "🤝 族群共振": display_resonance,
                     "🔥 雙腦總分": round(score, 1)
                 })
         except:
             pass
             
-        # 更新進度條 (20 ~ 95)
         progress_bar.progress(20 + int(((i + 1) / total) * 75))
         
     status_text.text("⏳ [3/3] 彙整戰情報告...")
