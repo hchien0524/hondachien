@@ -7,14 +7,13 @@ import io
 def load_and_clean_csv(file):
     """終極強健版：直接讀取純文字，避開 Pandas 的欄位不對齊錯誤"""
     encodings = ['big5-hkscs', 'cp950', 'utf-8', 'utf-8-sig']
-    file_bytes = file.getvalue() # 取得上傳檔案的二進位資料
+    file_bytes = file.getvalue() 
     
     for enc in encodings:
         try:
             text = file_bytes.decode(enc)
             lines = text.split('\n')
             
-            # 往下找前 15 列，看哪一列包含「代號」
             header_idx = -1
             for i, line in enumerate(lines[:15]):
                 if '代號' in line or '證券代號' in line:
@@ -22,10 +21,8 @@ def load_and_clean_csv(file):
                     break
             
             if header_idx != -1:
-                # 從真正的標題列開始，重新組合成 CSV 格式
                 csv_data = '\n'.join(lines[header_idx:])
                 df = pd.read_csv(io.StringIO(csv_data), dtype=str, skipinitialspace=True)
-                # 清理標題列的空白與引號
                 df.columns = df.columns.str.strip().str.replace('"', '').str.replace(' ', '')
                 return df
         except:
@@ -33,7 +30,6 @@ def load_and_clean_csv(file):
     return None
 
 def find_column(df, keywords):
-    """智慧尋找 CSV 中的關鍵欄位"""
     for col in df.columns:
         for kw in keywords:
             if kw in str(col):
@@ -51,7 +47,7 @@ def run_radar(uploaded_csvs, filter_momentum, filter_resonance, filter_liquidity
     status_text.text("⏳ [1/3] 執行 CSV 內部迴圈：解析法人籌碼與連買天數...")
     
     all_data = []
-    debug_cols = [] # 用來收集欄位名稱以供除錯
+    debug_cols = [] 
     
     for file in uploaded_csvs:
         df = load_and_clean_csv(file)
@@ -62,13 +58,10 @@ def run_radar(uploaded_csvs, filter_momentum, filter_resonance, filter_liquidity
         
         col_code = find_column(df, ['證券代號', '代號', 'Code'])
         col_name = find_column(df, ['證券名稱', '名稱', 'Name'])
-        # 擴充投信買賣超的關鍵字，涵蓋櫃買中心的 "投信-買賣超"
         col_trust = find_column(df, ['投信買賣超', '投信-買賣超', '投信買超'])
         
         if col_code and col_trust:
-            # 清理代號格式 (去除 =, " 等雜訊)
             df[col_code] = df[col_code].astype(str).str.replace('=', '').str.replace('"', '').str.strip()
-            # 清理買賣超數字 (去除逗號，轉為數值)
             df[col_trust] = pd.to_numeric(df[col_trust].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
             
             temp_df = df[[col_code, col_name, col_trust]].copy()
@@ -89,7 +82,6 @@ def run_radar(uploaded_csvs, filter_momentum, filter_resonance, filter_liquidity
         連買天數=('買超天數', 'sum')
     ).reset_index()
     
-    # 初步篩選：只抓投信總買超 > 0 的標的，取前 30 名進入技術面檢驗
     top_candidates = summary_df[summary_df['總買超'] > 0].sort_values('總買超', ascending=False).head(30)
     progress_bar.progress(40)
     
@@ -101,9 +93,10 @@ def run_radar(uploaded_csvs, filter_momentum, filter_resonance, filter_liquidity
     results = []
     total = len(top_candidates)
     
-    for idx, row in top_candidates.iterrows():
+    # 【關鍵修復】：使用 enumerate 來取得正確的迴圈次數 (i)，避免使用 Pandas 的原始 index
+    for i, (idx, row) in enumerate(top_candidates.iterrows()):
         code = row['代號']
-        if len(code) != 4: # 略過權證與 ETF
+        if len(code) != 4: 
             continue
             
         try:
@@ -118,25 +111,20 @@ def run_radar(uploaded_csvs, filter_momentum, filter_resonance, filter_liquidity
                 ma5 = float(hist['Close'].rolling(window=5).mean().iloc[-1])
                 ma10 = float(hist['Close'].rolling(window=10).mean().iloc[-1])
                 ma20 = float(hist['Close'].rolling(window=20).mean().iloc[-1])
-                vol_5d = float(hist['Volume'].rolling(window=5).mean().iloc[-1]) / 1000 # 換算成張
+                vol_5d = float(hist['Volume'].rolling(window=5).mean().iloc[-1]) / 1000 
                 
-                # 計算動能 (月線乖離率)
                 bias_20 = ((close - ma20) / ma20) * 100
                 
-                # 💧 鐵血流動性濾網
                 if filter_liquidity and vol_5d < 1000:
                     continue
                     
-                # 🔥 嚴格動能濾網 (乖離率 > 0.2%)
                 if filter_momentum and bias_20 < 0.2:
                     continue
                     
-                # 🤝 嚴格族群濾網 (模擬共振分數)
                 resonance_score = np.random.randint(1, 5) if filter_resonance else 0
                 if filter_resonance and resonance_score < 3:
                     continue
                     
-                # 🧠 雙腦總分計算 (籌碼連買 + 技術動能 + 族群共振)
                 score = (row['連買天數'] * 10) + (bias_20 * 2) + (resonance_score * 5)
                 
                 results.append({
@@ -153,8 +141,8 @@ def run_radar(uploaded_csvs, filter_momentum, filter_resonance, filter_liquidity
         except:
             continue
             
-        # 更新進度條
-        progress_bar.progress(40 + int(((idx + 1) / total) * 50))
+        # 使用 i (0, 1, 2...) 來計算進度，確保永遠在 40~90 之間
+        progress_bar.progress(40 + int(((i + 1) / total) * 50))
         
     # ==========================================
     # 🎯 階段三：戰情報告輸出
