@@ -130,14 +130,22 @@ def main():
                                 
                                 df_display.insert(0, '加入監控', False)
                                 
-                                # 現代化進度條 UI
-                                styled_df = df_display.style.format({
-                                    "收盤價": "{:.2f}", "乖離率(%)": "{:.2f}",
-                                    "投信買賣超": "{:.0f}", "外資買賣超": "{:.0f}", 
-                                    "5日均量": "{:.0f}", "動能比例": "{:.2f}", "總分": "{:.2f}"
-                                }).bar(subset=['總分'], color='#00cc66', vmin=0) \
-                                  .bar(subset=['動能比例'], color='#ff9900', vmin=0) \
-                                  .background_gradient(cmap='RdYlGn_r', subset=['乖離率(%)'])
+                                # 🛡️ 安全的動態格式化 (防 KeyError 閃退)
+                                format_dict = {}
+                                for col in df_display.columns:
+                                    if col in ["收盤價", "乖離率(%)", "動能比例", "總分"]:
+                                        format_dict[col] = "{:.2f}"
+                                    elif col in ["投信買賣超", "外資買賣超", "連買天數"] or "均量" in col:
+                                        format_dict[col] = "{:.0f}"
+
+                                styled_df = df_display.style.format(format_dict)
+                                
+                                if '總分' in df_display.columns:
+                                    styled_df = styled_df.bar(subset=['總分'], color='#00cc66', vmin=0)
+                                if '動能比例' in df_display.columns:
+                                    styled_df = styled_df.bar(subset=['動能比例'], color='#ff9900', vmin=0)
+                                if '乖離率(%)' in df_display.columns:
+                                    styled_df = styled_df.background_gradient(cmap='RdYlGn_r', subset=['乖離率(%)'])
                                 
                                 edited_df = st.data_editor(
                                     styled_df, 
@@ -159,31 +167,4 @@ def main():
                                                     "代號": code,
                                                     "名稱": row['名稱'],
                                                     "建倉價": float(row['收盤價']),
-                                                    "收盤價": float(row['收盤價'])
-                                                })
-                                        save_local_portfolio(st.session_state['portfolio'])
-                                        st.success(f"✅ 成功收編 {len(selected_rows)} 檔真龍！已自動備份至本機。")
-                                        st.rerun()
-                                    else:
-                                        st.warning("請先勾選要收編的股票！")
-
-                                save_capsule(df_display, "全自動狙擊", min_trust_buy, max_bias)
-                        else:
-                            st.warning("⚠️ 在目前的基礎參數下，沒有股票符合條件。")
-
-    # --- 分頁二：持股監控中心 ---
-    with tab2:
-        try:
-            render_portfolio_monitor()
-        except Exception as e:
-            st.error(f"監控中心發生錯誤: {e}")
-            
-    # --- 分頁三：時光膠囊 ---
-    with tab3:
-        try:
-            render_capsule_ui()
-        except Exception as e:
-            st.error(f"時光膠囊發生錯誤: {e}")
-
-if __name__ == "__main__":
-    main()
+                                                    "收盤價": float(row['
