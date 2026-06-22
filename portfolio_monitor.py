@@ -3,7 +3,7 @@ import yfinance as yf
 import pandas as pd
 
 def render_portfolio_monitor():
-    st.header("🛡️ 總司令戰情儀表板 (V28 鐵血量化版)")
+    st.header("🛡️ 總司令戰情儀表板 (V28.2 鐵血量化版)")
     
     if 'portfolio' not in st.session_state or len(st.session_state['portfolio']) == 0:
         st.info("目前沒有監控中的持股。請從左側邊欄載入戰情包，或在此手動新增。")
@@ -16,14 +16,17 @@ def render_portfolio_monitor():
     cols = st.columns(3)
     
     for idx, item in enumerate(st.session_state['portfolio']):
-        # 完美相容各種 JSON 欄位命名
+        # 完美相容各種 JSON 欄位命名，並加入 name 讀取
         code = item.get('code', item.get('Ticker', item.get('代號', '')))
+        name = item.get('name', item.get('Name', item.get('名稱', '')))
         cost = float(item.get('cost', item.get('Cost', item.get('成本', 0.0))))
         
         with cols[idx % 3]:
             card_container = st.container(border=True)
             with card_container:
-                st.markdown(f"### 🎯 [{code}]")
+                # 標題動態顯示名稱
+                display_title = f"### 🎯 [{code}] {name}" if name else f"### 🎯 [{code}]"
+                st.markdown(display_title)
                 st.write(f"建倉成本: **{cost:.2f}**")
                 
                 if not code:
