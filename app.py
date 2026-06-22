@@ -32,7 +32,6 @@ def main():
     st.sidebar.caption("V27.1 輕量化量化交易系統")
     
     st.sidebar.header("📂 1. 數據引擎")
-    # 【關鍵修復 1】：恢復多檔上傳功能 (支援 CSV 內部迴圈計算連續買超)
     uploaded_csvs = st.sidebar.file_uploader(
         "上傳法人買賣超 CSV (支援多檔歷史資料)", 
         type=['csv'], 
@@ -81,7 +80,6 @@ def main():
     # ==========================================
     # 🖥️ 主畫面三分頁 (Tabs)
     # ==========================================
-    # 【關鍵修復 2】：加回「時光膠囊」分頁
     tab1, tab2, tab3 = st.tabs(["🚀 雷達掃描室", "🛡️ 持股監控中心", "⏳ 時光膠囊 (AI 回測)"])
     
     # --- 分頁 1：雷達掃描室 ---
@@ -93,9 +91,8 @@ def main():
                 if strategy_core:
                     try:
                         with st.spinner("📡 正在執行 CSV 內部迴圈與籌碼動能分析..."):
-                            # 這裡預留給您的 strategy_core 呼叫
-                            # strategy_core.run_radar(uploaded_csvs, filter_momentum, filter_resonance, filter_liquidity)
-                            st.success("✅ 雷達掃描完成！(請依據您的 strategy_core 實際函數名稱進行串接)")
+                            # 【關鍵解封】：正式呼叫核心引擎
+                            strategy_core.run_radar(uploaded_csvs, filter_momentum, filter_resonance, filter_liquidity)
                     except Exception as e:
                         st.error(f"雷達運算發生錯誤: {e}")
                 else:
