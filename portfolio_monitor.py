@@ -6,17 +6,20 @@ import re
 
 @st.cache_data(ttl=86400)
 def fetch_stock_name(code):
-    """使用 Yahoo 奇摩股市爬蟲抓取股名 (免 API 限制)"""
+    """使用 Yahoo 奇摩股市爬蟲抓取股名 (Title 精準解析版)"""
     try:
         url = f"https://tw.stock.yahoo.com/quote/{code}"
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64 ) AppleWebKit/537.36'}
         res = requests.get(url, headers=headers, timeout=5)
         if res.status_code == 200:
-            match = re.search(r'<h1[^>]*>([^<]+)</h1>', res.text)
+            # 改抓 <title> 標籤，格式通常為 "台玻(1802) - 股價走勢 - Yahoo奇摩股市"
+            match = re.search(r'<title>([^<]+)</title>', res.text)
             if match:
-                full_name = match.group(1)
-                name = full_name.replace(str(code), '').strip()
-                return name if name else "自選股"
+                title_text = match.group(1)
+                # 以左括號 '(' 作為切割點，精準取出前面的股名
+                name = title_text.split('(')[0].strip()
+                if name and "Yahoo" not in name:
+                    return name
     except:
         pass
     return "自選股"
@@ -61,7 +64,7 @@ def render_portfolio_monitor():
                     if exists:
                         st.warning(f"⚠️ {new_code} 已經在監控名單中了！")
                     else:
-                        # 【關鍵修復】：手動新增時，呼叫爬蟲抓取真實股名
+                        # 呼叫爬蟲抓取真實股名
                         real_name = fetch_stock_name(new_code)
                         st.session_state['portfolio'].append({
                             "代號": new_code,
