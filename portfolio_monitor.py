@@ -1,6 +1,25 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import requests
+import re
+
+@st.cache_data(ttl=86400)
+def fetch_stock_name(code):
+    """使用 Yahoo 奇摩股市爬蟲抓取股名 (免 API 限制)"""
+    try:
+        url = f"https://tw.stock.yahoo.com/quote/{code}"
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64 ) AppleWebKit/537.36'}
+        res = requests.get(url, headers=headers, timeout=5)
+        if res.status_code == 200:
+            match = re.search(r'<h1[^>]*>([^<]+)</h1>', res.text)
+            if match:
+                full_name = match.group(1)
+                name = full_name.replace(str(code), '').strip()
+                return name if name else "自選股"
+    except:
+        pass
+    return "自選股"
 
 @st.cache_data(ttl=300)
 def get_stock_tech(code):
@@ -42,13 +61,15 @@ def render_portfolio_monitor():
                     if exists:
                         st.warning(f"⚠️ {new_code} 已經在監控名單中了！")
                     else:
+                        # 【關鍵修復】：手動新增時，呼叫爬蟲抓取真實股名
+                        real_name = fetch_stock_name(new_code)
                         st.session_state['portfolio'].append({
                             "代號": new_code,
-                            "名稱": "自選股",
+                            "名稱": real_name,
                             "建倉價": new_cost,
                             "收盤價": new_cost
                         })
-                        st.success(f"✅ 成功加入 {new_code}！")
+                        st.success(f"✅ 成功加入 {new_code} {real_name}！")
                         st.rerun()
                 else:
                     st.warning("請輸入股票代號！")
@@ -128,14 +149,12 @@ def render_portfolio_monitor():
         code = item['code']
         idx = item['idx'] 
         
-        # 【關鍵修復】：改用 rgba 自適應透明度，不強制寫死背景與字體顏色
         st.markdown(f"""
         <div style="border: 1px solid rgba(128, 128, 128, 0.4); border-radius: 10px; padding: 15px; margin-bottom: 15px; background-color: rgba(128, 128, 128, 0.1);">
             <h4 style="margin-top: 0; margin-bottom: 10px; color: inherit;">[{code}] {item['name']} &nbsp;&nbsp; {item['status_html']}</h4>
         </div>
         """, unsafe_allow_html=True)
         
-        # 卡片內部資訊
         col1, col2, col3, col4 = st.columns([1.5, 1.5, 2, 0.5])
         
         with col1:
