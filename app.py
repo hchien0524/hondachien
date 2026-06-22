@@ -118,7 +118,7 @@ def main():
             if st.button("啟動 AI 網格搜索", use_container_width=True):
                 if backtest_engine:
                     with st.spinner(f"🕰️ 正在啟動時光機，回到 {target_date} 進行參數最佳化..."):
-                        # backtest_engine.run_grid_search(target_date)
+                         backtest_engine.run_grid_search(target_date)
                         st.success("✅ 網格搜索完成！最佳參數已產出。")
                 else:
                     st.warning("⚠️ 找不到 `backtest_engine.py`，請確認回測引擎檔案存在。")
