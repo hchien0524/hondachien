@@ -5,9 +5,8 @@ import requests
 
 @st.cache_data(ttl=86400)
 def build_stock_mapping():
-    """終極正名系統：直接抓取政府官方開放資料 (每日更新一次，無次數限制，絕不被擋)"""
+    """終極正名系統：直接抓取政府官方開放資料"""
     mapping = {}
-    # 1. 抓取上市股票字典 (TWSE)
     try:
         res_twse = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=5 )
         if res_twse.status_code == 200:
@@ -15,8 +14,6 @@ def build_stock_mapping():
                 mapping[str(item.get('Code'))] = str(item.get('Name'))
     except:
         pass
-        
-    # 2. 抓取上櫃股票字典 (TPEx)
     try:
         res_tpex = requests.get("https://www.tpex.org.tw/openapi/v1/t187ap03_O", timeout=5 )
         if res_tpex.status_code == 200:
@@ -24,7 +21,6 @@ def build_stock_mapping():
                 mapping[str(item.get('公司代號'))] = str(item.get('公司簡稱'))
     except:
         pass
-        
     return mapping
 
 @st.cache_data(ttl=300)
@@ -45,8 +41,8 @@ def get_stock_tech(code):
     return None, None, None, None
 
 def render_portfolio_monitor():
-    st.header("🛡️ V26 持股監控中心 (高階戰情版)")
-    st.caption("自動追蹤陣地，計算動態均線防守價，並將【危險持股】強制置頂！")
+    st.header("🛡️ V26.1 持股監控中心 (現代卡片版)")
+    st.caption("全自動追蹤陣地，沉浸式戰情卡片，危險持股強制置頂！")
     
     if 'portfolio' not in st.session_state:
         st.session_state['portfolio'] = []
@@ -69,7 +65,7 @@ def render_portfolio_monitor():
                     else:
                         st.session_state['portfolio'].append({
                             "代號": new_code,
-                            "名稱": "", # 留空讓下方邏輯自動抓取
+                            "名稱": "", 
                             "建倉價": new_cost,
                             "收盤價": new_cost
                         })
@@ -84,7 +80,7 @@ def render_portfolio_monitor():
         return
 
     # ==========================================
-    # 1. 預先抓取資料與計算狀態 (為了排序與儀表板)
+    # 1. 預先抓取資料與計算狀態
     # ==========================================
     processed_data = []
     total_cost_amt = 0.0
@@ -92,17 +88,14 @@ def render_portfolio_monitor():
     red_lights = 0
     
     chip_df = st.session_state.get('latest_chip_data', pd.DataFrame())
-    
-    # 載入官方股票字典
     stock_dict = build_stock_mapping()
 
-    with st.spinner("📡 正在與交易所連線，同步最新防守線與股名..."):
+    with st.spinner("📡 正在與交易所連線，同步最新防守線與戰情卡片..."):
         for item in portfolio:
             code = str(item.get('代號', ''))
             name = item.get('名稱', '')
             cost = float(item.get('建倉價', item.get('收盤價', 0.0)))
             
-            # 【終極正名邏輯】如果名字是空的，或是之前抓失敗留下的「股票 XXX」，就從官方字典抓
             if not name or name == '自選股' or name.startswith('股票'):
                 found = False
                 if not chip_df.empty and '代號' in chip_df.columns:
@@ -112,7 +105,7 @@ def render_portfolio_monitor():
                         found = True
                 if not found:
                     name = stock_dict.get(code, f"股票 {code}")
-                item['名稱'] = name # 更新回 session_state 讓他永遠記住
+                item['名稱'] = name 
             
             close, ma5, ma10, ma20 = get_stock_tech(code)
             
@@ -128,7 +121,6 @@ def render_portfolio_monitor():
             total_cost_amt += cost 
             total_value_amt += close
             
-            # 🚨 狀態判定
             if close < ma10:
                 status_score = 3
                 status_text = "🔴 破線撤退 (跌破10MA)"
@@ -143,7 +135,6 @@ def render_portfolio_monitor():
                 status_text = "🟢 強勢續抱 (站穩5MA)"
                 color = "#00cc66"
                 
-            # 籌碼判定
             trust_buy = 0
             if not chip_df.empty and '代號' in chip_df.columns:
                 match = chip_df[chip_df['代號'] == code]
@@ -176,24 +167,33 @@ def render_portfolio_monitor():
         m4.success("✅ 陣地安全，無破線持股。")
 
     # ==========================================
-    # 3. 危險持股置頂排序與渲染
+    # 3. 🃏 現代化戰情卡片渲染 (危險度排序)
     # ==========================================
     processed_data.sort(key=lambda x: (x['status_score'], -x['ret_pct']), reverse=True)
 
     st.markdown("---")
-    st.subheader("📋 持股防守明細 (危險度排序)")
+    st.subheader("📋 持股防守卡片 (危險度置頂)")
 
     for item in processed_data:
         code = item['code']
         
-        with st.container():
+        # 使用 Streamlit 原生帶邊框的容器創造「卡片感」
+        with st.container(border=True):
+            
+            # --- 卡片頭部 (Header) ---
             st.markdown(f"""
-            <div style="border-left: 6px solid {item['color']}; padding-left: 15px; margin-bottom: 15px; background-color: rgba(255,255,255,0.03); border-radius: 5px; padding-top: 5px; padding-bottom: 5px;">
-                <h4 style="margin-bottom: 0;">[{code}] {item['name']} <span style="font-size: 18px; color: {item['color']}; margin-left: 10px;"> {item['status_text']}</span></h4>
-            </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                    <h3 style="margin: 0; padding: 0; border-left: 5px solid {item['color']}; padding-left: 10px;">
+                        [{code}] {item['name']}
+                    </h3>
+                    <span style="background-color: {item['color']}15; color: {item['color']}; border: 1px solid {item['color']}; padding: 5px 15px; border-radius: 20px; font-weight: bold; font-size: 14px;">
+                        {item['status_text']}
+                    </span>
+                </div>
             """, unsafe_allow_html=True)
             
-            col1, col2, col3, col4 = st.columns([1.5, 1.5, 1.5, 0.5])
+            # --- 卡片身體 (Body) ---
+            col1, col2, col3 = st.columns([1.2, 1.5, 1])
             
             with col1:
                 new_cost = st.number_input("建倉成本", value=float(item['cost']), step=0.5, key=f"cost_{code}")
@@ -205,10 +205,8 @@ def render_portfolio_monitor():
                     st.rerun()
                 
                 if item['close'] > 0:
-                    ret_color = "#ff3333" if item['ret_pct'] < 0 else "#00cc66"
-                    ret_sign = "+" if item['ret_pct'] > 0 else ""
-                    st.markdown(f"最新價: **{item['close']:.2f}**")
-                    st.markdown(f"報酬率: <span style='color:{ret_color}; font-weight:bold; font-size:18px;'>{ret_sign}{item['ret_pct']:.2f}%</span>", unsafe_allow_html=True)
+                    # 使用 st.metric 創造大數字視覺衝擊
+                    st.metric(label="最新報價", value=f"{item['close']:.2f}", delta=f"{item['ret_pct']:.2f}%")
                 else:
                     st.warning("無報價")
 
@@ -217,29 +215,23 @@ def render_portfolio_monitor():
                     dist_5 = ((item['close'] - item['ma5']) / item['ma5']) * 100
                     dist_10 = ((item['close'] - item['ma10']) / item['ma10']) * 100
                     
-                    st.write(f"**5MA (飆股線)**: `{item['ma5']:.2f}` (距 {dist_5:+.1f}%)")
-                    st.write(f"**10MA (波段線)**: `{item['ma10']:.2f}` (距 {dist_10:+.1f}%)")
-                    st.write(f"**20MA (大底線)**: `{item['ma20']:.2f}`")
+                    st.markdown("<div style='font-size: 14px; color: gray; margin-bottom: 5px;'>📉 動態防守線</div>", unsafe_allow_html=True)
+                    st.markdown(f"**5MA (飆股線)**: `{item['ma5']:.2f}` <span style='color:gray; font-size:13px;'>(距 {dist_5:+.1f}%)</span>", unsafe_allow_html=True)
+                    st.markdown(f"**10MA (波段線)**: `{item['ma10']:.2f}` <span style='color:gray; font-size:13px;'>(距 {dist_10:+.1f}%)</span>", unsafe_allow_html=True)
+                    st.markdown(f"**20MA (大底線)**: `{item['ma20']:.2f}`", unsafe_allow_html=True)
 
             with col3:
-                st.markdown("**🦅 主力動向 (近1日)**")
+                st.markdown("<div style='font-size: 14px; color: gray; margin-bottom: 5px;'>🦅 主力動向 (近1日)</div>", unsafe_allow_html=True)
                 trust_buy = item.get('trust_buy', 0)
                 if trust_buy != 0:
                     t_color = "#ff3333" if trust_buy < 0 else "#00cc66"
-                    st.markdown(f"投信: <span style='color:{t_color}; font-weight:bold;'>{trust_buy} 張</span>", unsafe_allow_html=True)
+                    st.markdown(f"投信: <span style='color:{t_color}; font-weight:bold; font-size:16px;'>{trust_buy} 張</span>", unsafe_allow_html=True)
                     if trust_buy < 0:
-                        st.error("⚠️ 投信賣超，注意結帳！")
+                        st.error("⚠️ 投信賣超結帳！")
                 else:
                     st.caption("無最新籌碼資料")
-                    
-                if item['ret_pct'] > 5 and item['status_score'] == 1:
-                    st.info("💡 獲利已拉開，建議將防守線設為成本價，確保不敗！")
-
-            with col4:
-                st.write("")
-                st.write("")
-                if st.button("❌ 刪除", key=f"del_{code}"):
+                
+                st.write("") # 排版微調
+                if st.button("❌ 撤退平倉", key=f"del_{code}", use_container_width=True):
                     st.session_state['portfolio'] = [p for p in st.session_state['portfolio'] if str(p['代號']) != code]
                     st.rerun()
-                    
-        st.markdown("---")
