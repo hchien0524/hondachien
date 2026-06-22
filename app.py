@@ -1,67 +1,77 @@
 import streamlit as st
 import pandas as pd
+import base64
 import json
 
+# 匯入模組
 try:
-    from data_engine import parse_chip_csv  
+    from data_engine import parse_chip_csv
     from strategy_core import calculate_scores
     from time_capsule import save_capsule, render_capsule_ui
     from market_filter import render_market_dashboard
     from portfolio_monitor import render_portfolio_monitor
-    from backtest_engine import run_batch_backtest, run_grid_search
+    from backtest_engine import run_batch_backtest
     MODULES_LOADED = True
 except ImportError as e:
     MODULES_LOADED = False
     st.error(f"模組匯入失敗: {e}。請確認所有 .py 檔案皆已建立。")
 
-st.set_page_config(page_title="HIOS Wave Radar V26.2", layout="wide")
+st.set_page_config(page_title="HIOS Wave Radar V26", layout="wide")
 
 def main():
-    st.title("🌊 HIOS Wave Radar V26.2 - AI 尋標版")
+    st.title("🌊 HIOS Wave Radar V26 - 終極完全體")
 
     if not MODULES_LOADED:
         st.stop()
 
+    # 1. 大盤風控儀表板
     try:
         render_market_dashboard()
     except Exception as e:
         st.warning(f"大盤風控模組載入中或發生錯誤: {e}")
 
+    # 2. 側邊欄：戰術參數與戰情壓縮包
     st.sidebar.header("⚙️ 戰術參數設定")
-    min_trust_buy = st.sidebar.number_input("投信買超下限 (張)", value=100, step=50)
+    min_trust_buy = st.sidebar.number_input("投信買超下限 (張)", value=1000, step=100)
     max_bias = st.sidebar.number_input("MA20 乖離率上限 (%)", value=5.0, step=0.5)
-    max_price = st.sidebar.number_input("💰 最高股價上限 (元)", value=500.0, step=50.0)
-    min_volume = st.sidebar.number_input("💧 最低 5 日均量 (張)", value=1000, step=500)
+    max_price = st.sidebar.number_input("股價上限 (元)", value=500, step=50)
+    min_volume = st.sidebar.number_input("5日均量下限 (張)", value=1000, step=500)
     finmind_token = st.sidebar.text_input("🔑 FinMind Token (選填)", type="password")
 
     st.sidebar.markdown("---")
     st.sidebar.header("💾 實體戰情包 (防失憶)")
+    
     if 'portfolio' not in st.session_state:
         st.session_state['portfolio'] = []
 
-    uploaded_portfolio = st.sidebar.file_uploader("📥 匯入舊陣地 (上傳 JSON 檔)", type=['json'])
-    if uploaded_portfolio is not None:
+    uploaded_json = st.sidebar.file_uploader("📥 匯入戰情包 (.json)", type="json")
+    if uploaded_json is not None:
         try:
-            portfolio_data = json.load(uploaded_portfolio)
-            if isinstance(portfolio_data, list):
-                if st.sidebar.button("⚠️ 確認覆蓋目前陣地", type="primary"):
-                    st.session_state['portfolio'] = portfolio_data
-                    st.sidebar.success("✅ 陣地恢復成功！")
-                    st.rerun()
-        except Exception as e:
-            st.sidebar.error(f"❌ 讀取失敗: {e}")
-
+            st.session_state['portfolio'] = json.load(uploaded_json)
+            st.sidebar.success("✅ 陣地恢復成功！")
+        except:
+            st.sidebar.error("❌ 檔案解析失敗")
+                
     if st.session_state['portfolio']:
-        json_str = json.dumps(st.session_state['portfolio'], ensure_ascii=False, indent=2)
-        st.sidebar.download_button(label="💾 下載最新戰情包", data=json_str, file_name="HIOS_Portfolio.json", mime="application/json")
+        json_str = json.dumps(st.session_state['portfolio'], indent=2)
+        st.sidebar.download_button(
+            label="💾 下載最新戰情包",
+            data=json_str,
+            file_name="hios_portfolio.json",
+            mime="application/json"
+        )
 
-    tab1, tab2, tab3 = st.tabs(["🚀 雷達掃描室 (找飆股)", "🛡️ 持股監控中心 (顧陣地)", "⏳ V25 回測沙盒 (驗證勝率)"])
+    # ==========================================
+    # 3. 雙視窗核心架構
+    # ==========================================
+    tab1, tab2, tab3 = st.tabs(["🚀 雷達掃描室", "🛡️ 持股監控中心", "⏳ 時光機回測"])
 
+    # --- 分頁一：雷達掃描室 ---
     with tab1:
         st.subheader("📂 籌碼資料匯入 (支援多選)")
-        uploaded_files = st.file_uploader("請上傳三大法人 CSV 檔", type="csv", accept_multiple_files=True, key="radar_uploader")
+        uploaded_files = st.file_uploader("請上傳三大法人 CSV 檔", type="csv", accept_multiple_files=True)
 
-        if st.button("🚀 啟動極簡暴力掃描", type="primary"):
+        if st.button("🚀 啟動終極深度掃描", type="primary"):
             if not uploaded_files:
                 st.warning("⚠️ 請先上傳至少一份 CSV 檔案！")
             else:
@@ -72,133 +82,72 @@ def main():
                         if df is not None and not df.empty:
                             all_dfs.append(df)
 
-                    if all_dfs:
+                    if not all_dfs:
+                        st.error("❌ 找不到符合的資料，請確認 CSV 格式。")
+                    else:
                         df_clean = pd.concat(all_dfs, ignore_index=True)
-                        df_clean = df_clean.groupby(['代號', '名稱'], as_index=False).sum()
                         st.session_state['latest_chip_data'] = df_clean
                         
-                        df_results = calculate_scores(df_clean, min_trust_buy, max_bias, max_price, min_volume, finmind_token)
-                        st.session_state['scan_results'] = df_results
                         st.success(f"✅ 成功匯入籌碼資料，共保留 {len(df_clean)} 檔純血普通股。")
-                        
+
+                        df_results = calculate_scores(df_clean, min_trust_buy, max_bias, max_price, min_volume, finmind_token)
+
                         if not df_results.empty:
-                            save_capsule(df_results, "極簡總分", min_trust_buy, max_bias)
+                            st.markdown(f"### 🎯 掃描完成！共篩選出 {len(df_results)} 檔 S 級真龍")
+                            
+                            # 準備 Data Editor 的資料
+                            df_display = df_results.copy()
+                            df_display.insert(0, '加入監控', False)
+                            
+                            # 🃏 現代化 UI：使用 column_config 取代舊的 Pandas Styler
+                            edited_df = st.data_editor(
+                                df_display,
+                                column_config={
+                                    "加入監控": st.column_config.CheckboxColumn("📥 收編", default=False),
+                                    "總分": st.column_config.ProgressColumn("🔥 總分", format="%.2f", min_value=0, max_value=250),
+                                    "動能比例(%)": st.column_config.NumberColumn("🦅 動能(%)", format="%.2f %%"),
+                                    "乖離率(%)": st.column_config.NumberColumn("乖離率(%)", format="%.2f %%"),
+                                    "收盤價": st.column_config.NumberColumn("收盤價", format="%.2f"),
+                                },
+                                disabled=[col for col in df_display.columns if col != '加入監控'],
+                                hide_index=True,
+                                use_container_width=True
+                            )
 
-        if 'scan_results' in st.session_state:
-            df_results = st.session_state['scan_results']
-            if not df_results.empty:
-                st.markdown(f"### 🎯 掃描完成！共篩選出 {len(df_results)} 檔戰略目標 (已按總分排序)")
-                df_display = df_results.copy()
-                if '加入監控' not in df_display.columns:
-                    df_display.insert(0, '加入監控', False)
-                
-                styled_df = df_display.style.format({
-                    "收盤價": "{:.2f}", "乖離率(%)": "{:.2f}", "5日均量(張)": "{:.0f}", "投信買賣超": "{:.0f}", 
-                    "外資買賣超": "{:.0f}", "動能比例(%)": "{:.2f}", "連買天數": "{:.0f}", "🏆 總分": "{:.1f}"
-                }).background_gradient(cmap='RdYlGn_r', subset=['乖離率(%)']).background_gradient(cmap='YlGn', subset=['🏆 總分'])
-                
-                edited_df = st.data_editor(styled_df, column_config={"加入監控": st.column_config.CheckboxColumn("📥 收編", default=False)}, disabled=[col for col in df_display.columns if col != '加入監控'], hide_index=True, use_container_width=True)
-                
-                if st.button("📥 將勾選標的加入監控中心", type="primary"):
-                    selected_rows = edited_df[edited_df['加入監控'] == True]
-                    if not selected_rows.empty:
-                        for _, row in selected_rows.iterrows():
-                            code = str(row['代號'])
-                            if not any(str(item.get('代號', '')) == code for item in st.session_state['portfolio']):
-                                st.session_state['portfolio'].append({"代號": code, "名稱": str(row['名稱']), "建倉價": float(row['收盤價']), "收盤價": float(row['收盤價'])})
-                        st.success("✅ 成功加入監控中心！")
-            else:
-                st.warning("⚠️ 在目前的嚴格濾網下，沒有股票符合條件。")
+                            if st.button("➕ 將勾選標的加入監控中心", type="primary"):
+                                selected_rows = edited_df[edited_df['加入監控'] == True]
+                                if not selected_rows.empty:
+                                    for _, row in selected_rows.iterrows():
+                                        code = str(row['代號'])
+                                        if not any(str(p.get('代號')) == code for p in st.session_state['portfolio']):
+                                            st.session_state['portfolio'].append({
+                                                "代號": code,
+                                                "名稱": str(row['名稱']),
+                                                "建倉價": float(row['收盤價']),
+                                                "收盤價": float(row['收盤價'])
+                                            })
+                                    st.success(f"✅ 成功收編 {len(selected_rows)} 檔標的！請切換至「持股監控中心」查看。")
+                                    st.rerun()
+                                else:
+                                    st.warning("⚠️ 請先在表格中勾選要收編的股票！")
 
-        st.markdown("---")
-        render_capsule_ui()
+                            save_capsule(df_results, "終極暴力評分", min_trust_buy, max_bias)
+                        else:
+                            st.warning("⚠️ 在目前的嚴格濾網下，沒有股票符合條件。")
 
+    # --- 分頁二：持股監控中心 ---
     with tab2:
         try:
             render_portfolio_monitor()
         except Exception as e:
             st.error(f"監控中心發生錯誤: {e}")
-
+            
+    # --- 分頁三：時光機回測 ---
     with tab3:
-        st.header("⏳ V26.2 戰術回測沙盒 (AI 尋標版)")
-        st.markdown("上傳過去某天的 CSV，系統將模擬當天買進，並嚴格執行 **「跌破 10MA 停損/停利」** 的紀律。")
-        
-        col1, col2 = st.columns([1, 2])
-        with col1:
-            backtest_date = st.date_input("📅 選擇回測基準日 (CSV對應的日期)")
-        with col2:
-            bt_files = st.file_uploader("📂 上傳該日的法人 CSV 檔", type="csv", accept_multiple_files=True, key="bt_uploader")
-            
-        # 【新增】雙按鈕設計
-        col_btn1, col_btn2 = st.columns(2)
-        with col_btn1:
-            run_normal = st.button("⚙️ 啟動單一參數時光機 (使用左側參數)", type="primary", use_container_width=True)
-        with col_btn2:
-            run_grid = st.button("🤖 啟動 AI 網格尋標 (尋找聖杯參數)", type="primary", use_container_width=True)
-            
-        if run_normal or run_grid:
-            if not bt_files:
-                st.warning("請上傳歷史 CSV 檔案！")
-            else:
-                all_dfs = []
-                for f in bt_files:
-                    df = parse_chip_csv(f)
-                    if df is not None and not df.empty:
-                        all_dfs.append(df)
-                        
-                if all_dfs:
-                    df_clean = pd.concat(all_dfs, ignore_index=True)
-                    df_clean = df_clean.groupby(['代號', '名稱'], as_index=False).sum()
-                    date_str = backtest_date.strftime('%Y-%m-%d')
-                    
-                    if run_normal:
-                        # 執行單一參數回測
-                        df_bt_results = run_batch_backtest(df_clean, date_str, min_trust_buy, max_bias, max_price, min_volume)
-                        if not df_bt_results.empty:
-                            total_trades = len(df_bt_results)
-                            win_trades = len(df_bt_results[df_bt_results['區間報酬(%)'] > 0])
-                            win_rate = (win_trades / total_trades) * 100 if total_trades > 0 else 0
-                            avg_return = df_bt_results['區間報酬(%)'].mean()
-                            
-                            st.markdown("---")
-                            st.subheader("📊 戰術回測績效總結")
-                            m1, m2, m3 = st.columns(3)
-                            m1.metric("總交易檔數", f"{total_trades} 檔")
-                            m2.metric("策略勝率 (賺錢比例)", f"{win_rate:.1f} %")
-                            m3.metric("平均區間報酬", f"{avg_return:.2f} %")
-                            
-                            st.markdown("### 📜 逐筆交易明細")
-                            styled_bt = df_bt_results.style.format({
-                                "乖離率(%)": "{:.2f}", "進場價(隔日開盤)": "{:.2f}", "出場價": "{:.2f}", 
-                                "最大漲幅(%)": "{:.2f}", "區間報酬(%)": "{:.2f}"
-                            }).background_gradient(cmap='RdYlGn', subset=['區間報酬(%)'])
-                            
-                            st.dataframe(styled_bt, use_container_width=True, hide_index=True)
-                        else:
-                            st.warning("該日沒有符合條件的股票，或歷史股價抓取失敗。")
-                            
-                    elif run_grid:
-                        # 執行 AI 網格尋標
-                        df_grid_results = run_grid_search(df_clean, date_str, max_price, min_volume)
-                        if not df_grid_results.empty:
-                            st.markdown("---")
-                            st.subheader("🏆 AI 聖杯參數排行榜 (已過濾交易檔數 < 3 的極端值)")
-                            
-                            # 標示出第一名的最佳參數
-                            best_trust = df_grid_results.iloc[0]['投信買超下限']
-                            best_bias = df_grid_results.iloc[0]['乖離率上限(%)']
-                            best_win = df_grid_results.iloc[0]['勝率(%)']
-                            
-                            st.success(f"🎯 **AI 判定最佳參數** ➔ 投信買超 >= **{best_trust}** 張 且 乖離率 <= **{best_bias}** % (勝率: {best_win}%)")
-                            
-                            styled_grid = df_grid_results.style.format({
-                                "投信買超下限": "{:.0f}", "乖離率上限(%)": "{:.1f}", 
-                                "交易檔數": "{:.0f}", "勝率(%)": "{:.2f}", "平均報酬(%)": "{:.2f}"
-                            }).background_gradient(cmap='RdYlGn', subset=['勝率(%)', '平均報酬(%)'])
-                            
-                            st.dataframe(styled_grid, use_container_width=True, hide_index=True)
-                        else:
-                            st.warning("無法計算網格數據，可能是該日符合條件的股票太少。")
+        try:
+            render_capsule_ui()
+        except Exception as e:
+            st.error(f"時光機發生錯誤: {e}")
 
 if __name__ == "__main__":
     main()
