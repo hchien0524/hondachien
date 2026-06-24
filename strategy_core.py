@@ -40,8 +40,24 @@ def find_column(df, keywords):
                 return col
     return None
 
+# 🛠️ V29.2 回呼函數：強制寫入記憶體
+def add_targets_to_portfolio(selected_codes, default_cost, df):
+    if 'portfolio' not in st.session_state:
+        st.session_state['portfolio'] = []
+    for code in selected_codes:
+        name = df[df['代號']==code]['名稱'].values[0]
+        existing = next((item for item in st.session_state['portfolio'] if item.get("代號") == code), None)
+        if existing:
+            existing["成本價"] = default_cost 
+        else:
+            st.session_state['portfolio'].append({
+                "代號": code,
+                "名稱": name,
+                "成本價": default_cost
+            })
+
 def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
-    st.markdown("### 🧠 V29.3 終極雙腦評分雷達 (狀態記憶版)")
+    st.markdown("### 🧠 V29.3 終極雙腦評分雷達 (狀態記憶防閃退版)")
     
     # ==========================================
     # 1. 掃描引擎 (按下按鈕才執行，並將結果存入記憶體)
@@ -130,62 +146,4 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
                         
                     sector = row['所屬族群']
                     resonance_count = sector_counts.get(sector, 1) if sector != "其他/未分類" else 1
-                    if filter_resonance and resonance_count < 3:
-                        stats["reso_fail"] += 1
-                        continue
-                    
-                    trust_score = row['連買天數'] * 15
-                    resonance_bonus = resonance_count * 5 
-                    left_brain_score = trust_score + resonance_bonus
-                    
-                    right_brain_score = 0
-                    rb_evidence = []
-                    
-                    vol_ratio = vol_today / vol_5d
-                    if vol_ratio >= 3.0:
-                        right_brain_score += 60
-                        rb_evidence.append("爆量>3x")
-                    elif vol_ratio >= 2.5:
-                        right_brain_score += 50
-                        rb_evidence.append("爆量>2.5x")
-                    elif vol_ratio >= 1.5:
-                        right_brain_score += 30
-                        rb_evidence.append("出量>1.5x")
-                        
-                    right_brain_score += 10 
-                    high_20d = float(hist['High'].rolling(window=20).max().iloc[-2])
-                    if close >= high_20d:
-                        right_brain_score += 10
-                        rb_evidence.append("創20日高")
-                        
-                    abs_bias = abs(bias_20)
-                    if abs_bias < 3.0:
-                        right_brain_score += 20
-                        rb_evidence.append("乖離<3%")
-                    elif abs_bias <= 5.0:
-                        right_brain_score += 10
-                        rb_evidence.append("乖離3-5%")
-                    elif abs_bias > 8.0:
-                        right_brain_score -= 20
-                        rb_evidence.append("乖離>8%")
-                        
-                    ma_values = [ma5, ma10, ma20]
-                    entanglement = (max(ma_values) - min(ma_values)) / min(ma_values)
-                    if entanglement < 0.02 and (close > ma5 > ma10 > ma20):
-                        right_brain_score += 15
-                        rb_evidence.append("均線糾結發散")
-                    
-                    total_score = left_brain_score + right_brain_score
-                    display_resonance = f"{sector} ({resonance_count}檔)" if sector != "其他/未分類" else "無共振"
-                    
-                    if right_brain_score >= 40 and left_brain_score >= 45:
-                        strategy_type = "🔥 雙腦共振 (主將)"
-                    elif right_brain_score >= 40:
-                        strategy_type = "🚀 動能突破 (右腦)"
-                    else:
-                        strategy_type = "🛡️ 籌碼防禦 (左腦)"
-                    
-                    results.append({
-                        "代號": code,
-                        "名稱": row['名稱'],
-                        "投信總買超(張)": int(row['總買
+                    if filter_resonance
