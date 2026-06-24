@@ -41,7 +41,7 @@ def find_column(df, keywords):
     return None
 
 def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
-    st.markdown("### 🧠 V29 終極雙腦評分雷達 (投信防禦 + 動能狙擊)")
+    st.markdown("### 🧠 V29.1 終極雙腦評分雷達 (戰略透視版)")
     progress_bar = st.progress(0)
     status_text = st.empty()
     
@@ -60,7 +60,8 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
         
         if col_code and col_trust:
             df[col_code] = df[col_code].astype(str).str.replace('=', '').str.replace('"', '').str.strip()
-            df[col_trust] = pd.to_numeric(df[col_trust].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+            # ⚠️ 軍師修復：強制除以 1000，將「股數」轉換為「張數」
+            df[col_trust] = pd.to_numeric(df[col_trust].astype(str).str.replace(',', ''), errors='coerce').fillna(0) / 1000.0
             
             temp_df = df[[col_code, col_name, col_trust]].copy()
             temp_df.columns = ['代號', '名稱', '投信買賣超']
@@ -187,17 +188,28 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
                 total_score = left_brain_score + right_brain_score
                 display_resonance = f"{sector} ({resonance_count}檔)" if sector != "其他/未分類" else "無共振"
                 
+                # 🎯 V29.1 新增：戰略屬性自動判定
+                if right_brain_score >= 40 and left_brain_score >= 45:
+                    strategy_type = "🔥 雙腦共振 (主將)"
+                elif right_brain_score >= 40:
+                    strategy_type = "🚀 動能突破 (右腦)"
+                else:
+                    strategy_type = "🛡️ 籌碼防禦 (左腦)"
+                
                 results.append({
                     "代號": code,
                     "名稱": row['名稱'],
-                    "投信總買超": row['總買超'],
+                    "投信總買超(張)": int(row['總買超']), # 顯示為整數張數
                     "連買天數": row['連買天數'],
                     "最新收盤": round(close, 2),
                     "月線乖離(%)": round(bias_20, 2),
                     "今日量比": round(vol_ratio, 1),
                     "🤝 族群共振": display_resonance,
-                    "🧠 右腦動能": ",".join(rb_evidence) if rb_evidence else "洗盤醞釀中",
-                    "🔥 雙腦總分": round(total_score, 1)
+                    "🛡️ 左腦分": left_brain_score,
+                    "🚀 右腦分": right_brain_score,
+                    "🔥 總分": round(total_score, 1),
+                    "🎯 戰略屬性": strategy_type,
+                    "🧠 右腦證據": ",".join(rb_evidence) if rb_evidence else "量縮洗盤中"
                 })
             else:
                 stats["yf_fail"] += 1
@@ -221,7 +233,7 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
         st.markdown(f"✅ **最終存活真龍**：`{len(results)}` 檔")
     
     if results:
-        final_df = pd.DataFrame(results).sort_values('🔥 雙腦總分', ascending=False).reset_index(drop=True)
+        final_df = pd.DataFrame(results).sort_values('🔥 總分', ascending=False).reset_index(drop=True)
         st.success(f"🎯 掃描完成！共篩選出 {len(final_df)} 檔符合條件的標的。")
         st.dataframe(final_df, use_container_width=True)
         
