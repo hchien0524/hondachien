@@ -41,7 +41,7 @@ def find_column(df, keywords):
     return None
 
 def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
-    st.markdown("### 🧠 V28.1 雙腦評分雷達 (戰情透視版)...")
+    st.markdown("### 🧠 V29 終極雙腦評分雷達 (投信防禦 + 動能狙擊)")
     progress_bar = st.progress(0)
     status_text = st.empty()
     
@@ -77,7 +77,7 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
         總買超=('投信買賣超', 'sum'),
         連買天數=('買超天數', 'sum')
     ).reset_index()
-    
+
     top_candidates = summary_df[summary_df['總買超'] > 0].copy()
     
     top_candidates['所屬族群'] = top_candidates['代號'].map(lambda x: STOCK_SECTOR.get(x, "其他/未分類"))
@@ -89,11 +89,12 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
     
     results = []
     
-    # 🛠️ 追蹤擊殺數據
+    # 🛠️ 追蹤擊殺數據 (更新為 V29 邏輯)
     stats = {
         "yf_fail": 0,
         "vol_fail": 0,
-        "bias_fail": 0,
+        "ma60_fail": 0,      # 取代原本的 bias_fail (跌破月線)，改為跌破季線才殺
+        "bias_max_fail": 0,  # 乖離過大追高殺
         "reso_fail": 0
     }
     
@@ -105,25 +106,37 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
             
         try:
             tkr = yf.Ticker(f"{code}.TW")
-            hist = tkr.history(period="1mo")
+            # ⚠️ 軍師修正：將 1mo 改為 6mo，才能算出 MA60 季線
+            hist = tkr.history(period="6mo")
             if hist.empty:
                 tkr = yf.Ticker(f"{code}.TWO")
-                hist = tkr.history(period="1mo")
+                hist = tkr.history(period="6mo")
                 
-            if not hist.empty and len(hist) >= 20:
+            if not hist.empty and len(hist) >= 60:
                 close = float(hist['Close'].iloc[-1])
+                ma5 = float(hist['Close'].rolling(window=5).mean().iloc[-1])
+                ma10 = float(hist['Close'].rolling(window=10).mean().iloc[-1])
                 ma20 = float(hist['Close'].rolling(window=20).mean().iloc[-1])
-                vol_5d = float(hist['Volume'].rolling(window=5).mean().iloc[-1]) / 1000 
+                ma60 = float(hist['Close'].rolling(window=60).mean().iloc[-1])
                 
-                bias_20 = ((close - ma20) / ma20) * 100
+                vol_today = float(hist['Volume'].iloc[-1]) / 1000
+                vol_5d = float(hist['Volume'].rolling(window=5).mean().iloc[-1]) / 1000 
+                if vol_5d == 0: vol_5d = 1 # 防呆
                 
                 if vol_5d < filter_vol_min:
                     stats["vol_fail"] += 1
                     continue
                     
-                # ⚠️ 這裡就是地板防線：bias_20 < 0.0 代表跌破月線
-                if bias_20 < 0.0 or bias_20 > filter_bias_max:
-                    stats["bias_fail"] += 1
+                # 🛡️ V29 左腦防禦：MA60 季線死刑 (允許在 MA20 上下洗盤建倉)
+                if close < ma60:
+                    stats["ma60_fail"] += 1
+                    continue
+                
+                bias_20 = ((close - ma20) / ma20) * 100
+                
+                # 拒絕追高：乖離率大於設定值剔除
+                if bias_20 > filter_bias_max:
+                    stats["bias_max_fail"] += 1
                     continue
                     
                 sector = row['所屬族群']
@@ -132,12 +145,60 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
                 if filter_resonance and resonance_count < 3:
                     stats["reso_fail"] += 1
                     continue
-                    
-                bias_score = (filter_bias_max - bias_20) * 3
+                
+                # ==========================================
+                # 🧠 V29 雙腦計分系統開始
+                # ==========================================
+                
+                # 【左腦分數】：投信籌碼與族群共振
                 trust_score = row['連買天數'] * 15
                 resonance_bonus = resonance_count * 5 
+                left_brain_score = trust_score + resonance_bonus
                 
-                score = trust_score + bias_score + resonance_bonus
+                # 【右腦分數】：動能狙擊 (V29 憲法)
+                right_brain_score = 0
+                rb_evidence = []
+                
+                # 1. 量比 (60%)
+                vol_ratio = vol_today / vol_5d
+                if vol_ratio >= 3.0:
+                    right_brain_score += 60
+                    rb_evidence.append("爆量>3x")
+                elif vol_ratio >= 2.5:
+                    right_brain_score += 50
+                    rb_evidence.append("爆量>2.5x")
+                elif vol_ratio >= 1.5:
+                    right_brain_score += 30
+                    rb_evidence.append("出量>1.5x")
+                    
+                # 2. 趨勢 (20%)
+                right_brain_score += 10 # 只要存活就代表在 MA60 之上 (+10)
+                high_20d = float(hist['High'].rolling(window=20).max().iloc[-2])
+                if close >= high_20d:
+                    right_brain_score += 10
+                    rb_evidence.append("創20日高")
+                    
+                # 3. 位階 (20%)
+                abs_bias = abs(bias_20)
+                if abs_bias < 3.0:
+                    right_brain_score += 20
+                    rb_evidence.append("乖離<3%")
+                elif abs_bias <= 5.0:
+                    right_brain_score += 10
+                    rb_evidence.append("乖離3-5%")
+                elif abs_bias > 8.0:
+                    right_brain_score -= 20
+                    rb_evidence.append("乖離>8%")
+                    
+                # 4. 動能斜率 (+15%)
+                ma_values = [ma5, ma10, ma20]
+                entanglement = (max(ma_values) - min(ma_values)) / min(ma_values)
+                if entanglement < 0.02 and (close > ma5 > ma10 > ma20):
+                    right_brain_score += 15
+                    rb_evidence.append("均線糾結發散")
+                
+                # 總分結算
+                total_score = left_brain_score + right_brain_score
                 display_resonance = f"{sector} ({resonance_count}檔)" if sector != "其他/未分類" else "無共振"
                 
                 results.append({
@@ -147,9 +208,10 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
                     "連買天數": row['連買天數'],
                     "最新收盤": round(close, 2),
                     "月線乖離(%)": round(bias_20, 2),
-                    "5日均量(張)": int(vol_5d),
+                    "今日量比": round(vol_ratio, 1),
                     "🤝 族群共振": display_resonance,
-                    "🔥 雙腦總分": round(score, 1)
+                    "🧠 右腦動能": ",".join(rb_evidence) if rb_evidence else "洗盤醞釀中",
+                    "🔥 雙腦總分": round(total_score, 1)
                 })
             else:
                 stats["yf_fail"] += 1
@@ -165,9 +227,10 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
     # 🛠️ 顯示透視除錯報告
     with st.expander("🛠️ 雷達濾網擊殺報告 (點擊展開看真相)", expanded=True):
         st.markdown(f"**CSV 原始投信買超檔數**：`{total_csv_stocks}` 檔")
-        st.markdown(f"❌ **無報價/連線失敗**：`{stats['yf_fail']}` 檔 *(YFinance 抓不到資料)*")
+        st.markdown(f"❌ **無報價/連線失敗**：`{stats['yf_fail']}` 檔 *(YFinance 抓不到資料或上市未滿一季)*")
         st.markdown(f"❌ **流動性不足被殺**：`{stats['vol_fail']}` 檔 *(均量 < {filter_vol_min} 張)*")
-        st.markdown(f"❌ **乖離率不符被殺**：`{stats['bias_fail']}` 檔 *(跌破月線 或 乖離 > {filter_bias_max}%)*")
+        st.markdown(f"❌ **跌破季線死刑**：`{stats['ma60_fail']}` 檔 *(跌破 MA60 季線，大人棄守)*")
+        st.markdown(f"❌ **乖離過大被殺**：`{stats['bias_max_fail']}` 檔 *(乖離 > {filter_bias_max}%，拒絕追高)*")
         if filter_resonance:
             st.markdown(f"❌ **無族群共振被殺**：`{stats['reso_fail']}` 檔 *(孤鳥股)*")
         st.markdown(f"✅ **最終存活真龍**：`{len(results)}` 檔")
