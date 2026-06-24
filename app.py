@@ -14,7 +14,7 @@ except ImportError:
     backtest_engine = None
 
 st.set_page_config(
-    page_title="HIOS Wave Radar V27.2",
+    page_title="HIOS Wave Radar V29.3",
     page_icon="🎯",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -22,7 +22,7 @@ st.set_page_config(
 
 def main():
     st.sidebar.title("🎯 HIOS Wave Radar")
-    st.sidebar.caption("V27.2 動態參數升級版")
+    st.sidebar.caption("V29.3 終極雙腦狀態記憶版")
     
     st.sidebar.header("📂 1. 數據引擎")
     uploaded_csvs = st.sidebar.file_uploader(
@@ -31,7 +31,6 @@ def main():
         accept_multiple_files=True
     )
     
-    # 【關鍵升級】：將死板的打勾改成動態數值輸入，預設帶入時光機的最佳參數
     st.sidebar.header("⚙️ 2. 動態濾網設定")
     filter_vol_min = st.sidebar.number_input("💧 5日均量下限 (張)", min_value=0, max_value=20000, value=3000, step=500, help="過濾掉流動性差的冷門股")
     filter_bias_max = st.sidebar.number_input("🔥 月線乖離率上限 (%)", min_value=1.0, max_value=50.0, value=5.0, step=0.5, help="拒絕追高，過濾掉漲多乖離過大的危險股")
@@ -65,24 +64,21 @@ def main():
                 st.rerun()
         except Exception as e:
             st.sidebar.error("檔案解析失敗，請確認是否為正確的 JSON 檔。")
-
+    
     tab1, tab2, tab3 = st.tabs(["🚀 雷達掃描室", "🛡️ 持股監控中心", "⏳ 時光膠囊 (AI 回測)"])
     
     with tab1:
-        st.header("🚀 雷達掃描室 (雙腦評分系統)")
         if uploaded_csvs and len(uploaded_csvs) > 0:
-            st.info(f"📂 已成功載入 {len(uploaded_csvs)} 份 CSV 檔案，準備啟動內部迴圈。")
-            if st.button("啟動雷達掃描", type="primary"):
-                if strategy_core:
-                    try:
-                        with st.spinner("📡 正在執行 CSV 內部迴圈與籌碼動能分析..."):
-                            # 傳入動態參數
-                            strategy_core.run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min)
-                    except Exception as e:
-                        st.error(f"雷達運算發生錯誤: {e}")
-                else:
-                    st.warning("⚠️ 找不到 `strategy_core.py`，請確認核心邏輯檔案存在。")
+            if strategy_core:
+                try:
+                    # ⚠️ 軍師修正：移除 app.py 的按鈕封印，將控制權與記憶體完全交給 strategy_core
+                    strategy_core.run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min)
+                except Exception as e:
+                    st.error(f"雷達運算發生錯誤: {e}")
+            else:
+                st.warning("⚠️ 找不到 `strategy_core.py`，請確認核心邏輯檔案存在。")
         else:
+            st.header("🚀 雷達掃描室 (雙腦評分系統)")
             st.info("👈 請先從左側邊欄上傳「法人買賣超 CSV (可多選)」以啟動雷達。")
             
     with tab2:
