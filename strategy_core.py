@@ -89,12 +89,11 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
     
     results = []
     
-    # 🛠️ 追蹤擊殺數據 (更新為 V29 邏輯)
     stats = {
         "yf_fail": 0,
         "vol_fail": 0,
-        "ma60_fail": 0,      # 取代原本的 bias_fail (跌破月線)，改為跌破季線才殺
-        "bias_max_fail": 0,  # 乖離過大追高殺
+        "ma60_fail": 0,
+        "bias_max_fail": 0,
         "reso_fail": 0
     }
     
@@ -106,7 +105,6 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
             
         try:
             tkr = yf.Ticker(f"{code}.TW")
-            # ⚠️ 軍師修正：將 1mo 改為 6mo，才能算出 MA60 季線
             hist = tkr.history(period="6mo")
             if hist.empty:
                 tkr = yf.Ticker(f"{code}.TWO")
@@ -121,20 +119,18 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
                 
                 vol_today = float(hist['Volume'].iloc[-1]) / 1000
                 vol_5d = float(hist['Volume'].rolling(window=5).mean().iloc[-1]) / 1000 
-                if vol_5d == 0: vol_5d = 1 # 防呆
+                if vol_5d == 0: vol_5d = 1 
                 
                 if vol_5d < filter_vol_min:
                     stats["vol_fail"] += 1
                     continue
                     
-                # 🛡️ V29 左腦防禦：MA60 季線死刑 (允許在 MA20 上下洗盤建倉)
                 if close < ma60:
                     stats["ma60_fail"] += 1
                     continue
                 
                 bias_20 = ((close - ma20) / ma20) * 100
                 
-                # 拒絕追高：乖離率大於設定值剔除
                 if bias_20 > filter_bias_max:
                     stats["bias_max_fail"] += 1
                     continue
@@ -146,20 +142,14 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
                     stats["reso_fail"] += 1
                     continue
                 
-                # ==========================================
-                # 🧠 V29 雙腦計分系統開始
-                # ==========================================
-                
-                # 【左腦分數】：投信籌碼與族群共振
+                # 🧠 V29 雙腦計分系統
                 trust_score = row['連買天數'] * 15
                 resonance_bonus = resonance_count * 5 
                 left_brain_score = trust_score + resonance_bonus
                 
-                # 【右腦分數】：動能狙擊 (V29 憲法)
                 right_brain_score = 0
                 rb_evidence = []
                 
-                # 1. 量比 (60%)
                 vol_ratio = vol_today / vol_5d
                 if vol_ratio >= 3.0:
                     right_brain_score += 60
@@ -171,14 +161,12 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
                     right_brain_score += 30
                     rb_evidence.append("出量>1.5x")
                     
-                # 2. 趨勢 (20%)
-                right_brain_score += 10 # 只要存活就代表在 MA60 之上 (+10)
+                right_brain_score += 10 
                 high_20d = float(hist['High'].rolling(window=20).max().iloc[-2])
                 if close >= high_20d:
                     right_brain_score += 10
                     rb_evidence.append("創20日高")
                     
-                # 3. 位階 (20%)
                 abs_bias = abs(bias_20)
                 if abs_bias < 3.0:
                     right_brain_score += 20
@@ -190,14 +178,12 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
                     right_brain_score -= 20
                     rb_evidence.append("乖離>8%")
                     
-                # 4. 動能斜率 (+15%)
                 ma_values = [ma5, ma10, ma20]
                 entanglement = (max(ma_values) - min(ma_values)) / min(ma_values)
                 if entanglement < 0.02 and (close > ma5 > ma10 > ma20):
                     right_brain_score += 15
                     rb_evidence.append("均線糾結發散")
                 
-                # 總分結算
                 total_score = left_brain_score + right_brain_score
                 display_resonance = f"{sector} ({resonance_count}檔)" if sector != "其他/未分類" else "無共振"
                 
@@ -224,7 +210,6 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
     progress_bar.progress(100)
     status_text.empty()
     
-    # 🛠️ 顯示透視除錯報告
     with st.expander("🛠️ 雷達濾網擊殺報告 (點擊展開看真相)", expanded=True):
         st.markdown(f"**CSV 原始投信買超檔數**：`{total_csv_stocks}` 檔")
         st.markdown(f"❌ **無報價/連線失敗**：`{stats['yf_fail']}` 檔 *(YFinance 抓不到資料或上市未滿一季)*")
@@ -239,5 +224,41 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
         final_df = pd.DataFrame(results).sort_values('🔥 雙腦總分', ascending=False).reset_index(drop=True)
         st.success(f"🎯 掃描完成！共篩選出 {len(final_df)} 檔符合條件的標的。")
         st.dataframe(final_df, use_container_width=True)
+        
+        # ➕ V29 新增：雷達直通監控中心 UI
+        st.markdown("### 🎯 鎖定目標：加入戰情監控")
+        with st.container(border=True):
+            col_sel, col_cost, col_btn = st.columns([2, 1, 1])
+            with col_sel:
+                selected_codes = st.multiselect(
+                    "選擇要加入監控的標的：", 
+                    final_df['代號'].tolist(),
+                    format_func=lambda x: f"{x} - {final_df[final_df['代號']==x]['名稱'].values[0]}"
+                )
+            with col_cost:
+                default_cost = st.number_input("設定建倉成本 (若尚未買進可設為 0)", min_value=0.0, value=0.0, step=0.5)
+            with col_btn:
+                st.write("") 
+                st.write("")
+                if st.button("➕ 加入監控中心", type="primary", use_container_width=True):
+                    if 'portfolio' not in st.session_state:
+                        st.session_state['portfolio'] = []
+                        
+                    added_count = 0
+                    for code in selected_codes:
+                        name = final_df[final_df['代號']==code]['名稱'].values[0]
+                        existing = next((item for item in st.session_state['portfolio'] if item.get("代號") == code), None)
+                        if existing:
+                            existing["成本價"] = default_cost 
+                        else:
+                            st.session_state['portfolio'].append({
+                                "代號": code,
+                                "名稱": name,
+                                "成本價": default_cost
+                            })
+                        added_count += 1
+                        
+                    if added_count > 0:
+                        st.success(f"✅ 成功將 {added_count} 檔標的加入監控中心！請切換至 Tab 2 查看。")
     else:
         st.warning("⚠️ 經過嚴格的技術面與籌碼面濾網，本次沒有標的符合條件。請查看上方的「擊殺報告」了解原因。")
