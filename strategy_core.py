@@ -146,4 +146,133 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
                         
                     sector = row['所屬族群']
                     resonance_count = sector_counts.get(sector, 1) if sector != "其他/未分類" else 1
-                    if filter_resonance
+                    if filter_resonance and resonance_count < 3:
+                        stats["reso_fail"] += 1
+                        continue
+                    
+                    trust_score = row['連買天數'] * 15
+                    resonance_bonus = resonance_count * 5 
+                    left_brain_score = trust_score + resonance_bonus
+                    
+                    right_brain_score = 0
+                    rb_evidence = []
+                    
+                    vol_ratio = vol_today / vol_5d
+                    if vol_ratio >= 3.0:
+                        right_brain_score += 60
+                        rb_evidence.append("爆量>3x")
+                    elif vol_ratio >= 2.5:
+                        right_brain_score += 50
+                        rb_evidence.append("爆量>2.5x")
+                    elif vol_ratio >= 1.5:
+                        right_brain_score += 30
+                        rb_evidence.append("出量>1.5x")
+                        
+                    right_brain_score += 10 
+                    high_20d = float(hist['High'].rolling(window=20).max().iloc[-2])
+                    if close >= high_20d:
+                        right_brain_score += 10
+                        rb_evidence.append("創20日高")
+                        
+                    abs_bias = abs(bias_20)
+                    if abs_bias < 3.0:
+                        right_brain_score += 20
+                        rb_evidence.append("乖離<3%")
+                    elif abs_bias <= 5.0:
+                        right_brain_score += 10
+                        rb_evidence.append("乖離3-5%")
+                    elif abs_bias > 8.0:
+                        right_brain_score -= 20
+                        rb_evidence.append("乖離>8%")
+                        
+                    ma_values = [ma5, ma10, ma20]
+                    entanglement = (max(ma_values) - min(ma_values)) / min(ma_values)
+                    if entanglement < 0.02 and (close > ma5 > ma10 > ma20):
+                        right_brain_score += 15
+                        rb_evidence.append("均線糾結發散")
+                    
+                    total_score = left_brain_score + right_brain_score
+                    display_resonance = f"{sector} ({resonance_count}檔)" if sector != "其他/未分類" else "無共振"
+                    
+                    if right_brain_score >= 40 and left_brain_score >= 45:
+                        strategy_type = "🔥 雙腦共振 (主將)"
+                    elif right_brain_score >= 40:
+                        strategy_type = "🚀 動能突破 (右腦)"
+                    else:
+                        strategy_type = "🛡️ 籌碼防禦 (左腦)"
+                    
+                    results.append({
+                        "代號": code,
+                        "名稱": row['名稱'],
+                        "投信總買超(張)": int(row['總買超']),
+                        "連買天數": row['連買天數'],
+                        "最新收盤": round(close, 2),
+                        "月線乖離(%)": round(bias_20, 2),
+                        "今日量比": round(vol_ratio, 1),
+                        "🤝 族群共振": display_resonance,
+                        "🛡️ 左腦分": left_brain_score,
+                        "🚀 右腦分": right_brain_score,
+                        "🔥 總分": round(total_score, 1),
+                        "🎯 戰略屬性": strategy_type,
+                        "🧠 右腦證據": ",".join(rb_evidence) if rb_evidence else "量縮洗盤中"
+                    })
+                else:
+                    stats["yf_fail"] += 1
+            except:
+                stats["yf_fail"] += 1
+                
+            progress_bar.progress(20 + int(((i + 1) / total_csv_stocks) * 75))
+            
+        status_text.text("⏳ [3/3] 彙整戰情報告...")
+        progress_bar.progress(100)
+        status_text.empty()
+        
+        # ⚠️ 關鍵修復：將結果存入 session_state，避免重整消失
+        st.session_state['radar_results'] = results
+        st.session_state['radar_stats'] = stats
+        st.session_state['radar_total_csv'] = total_csv_stocks
+        st.session_state['filter_resonance'] = filter_resonance
+    # ==========================================
+    # 2. 渲染結果 (從記憶體讀取，不受按鈕重整影響)
+    # ==========================================
+    if 'radar_results' in st.session_state:
+        results = st.session_state['radar_results']
+        stats = st.session_state['radar_stats']
+        total_csv_stocks = st.session_state['radar_total_csv']
+        saved_filter_resonance = st.session_state.get('filter_resonance', True)
+        
+        with st.expander("🛠️ 雷達濾網擊殺報告 (點擊展開看真相)", expanded=False):
+            st.markdown(f"**CSV 原始投信買超檔數**：`{total_csv_stocks}` 檔")
+            st.markdown(f"❌ **無報價/連線失敗**：`{stats['yf_fail']}` 檔")
+            st.markdown(f"❌ **流動性不足被殺**：`{stats['vol_fail']}` 檔")
+            st.markdown(f"❌ **跌破季線死刑**：`{stats['ma60_fail']}` 檔")
+            st.markdown(f"❌ **乖離過大被殺**：`{stats['bias_max_fail']}` 檔")
+            if saved_filter_resonance:
+                st.markdown(f"❌ **無族群共振被殺**：`{stats['reso_fail']}` 檔")
+            st.markdown(f"✅ **最終存活真龍**：`{len(results)}` 檔")
+        
+        if results:
+            final_df = pd.DataFrame(results).sort_values('🔥 總分', ascending=False).reset_index(drop=True)
+            st.success(f"🎯 掃描完成！共篩選出 {len(final_df)} 檔符合條件的標的。")
+            st.dataframe(final_df, use_container_width=True)
+            
+            st.markdown("### 🎯 鎖定目標：加入戰情監控")
+            with st.container(border=True):
+                col_sel, col_cost, col_btn = st.columns([2, 1, 1])
+                with col_sel:
+                    selected_codes = st.multiselect(
+                        "選擇要加入監控的標的：", 
+                        final_df['代號'].tolist(),
+                        format_func=lambda x: f"{x} - {final_df[final_df['代號']==x]['名稱'].values[0]}"
+                    )
+                with col_cost:
+                    default_cost = st.number_input("設定建倉成本 (若尚未買進可設為 0)", min_value=0.0, value=0.0, step=0.5)
+                with col_btn:
+                    st.write("") 
+                    st.write("")
+                    # ⚠️ 關鍵修復：使用 on_click 強制執行存檔
+                    st.button(
+                        "➕ 加入監控中心", 
+                        type="primary", 
+                        use_container_width=True,
+                        on_click=add
