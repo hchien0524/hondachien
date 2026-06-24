@@ -13,8 +13,14 @@ try:
 except ImportError:
     backtest_engine = None
 
+# 🛡️ 載入大盤風控模組
+try:
+    import market_filter
+except ImportError:
+    market_filter = None
+
 st.set_page_config(
-    page_title="HIOS Wave Radar V29.3",
+    page_title="HIOS Wave Radar V29.4",
     page_icon="🎯",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -22,7 +28,7 @@ st.set_page_config(
 
 def main():
     st.sidebar.title("🎯 HIOS Wave Radar")
-    st.sidebar.caption("V29.3 終極雙腦狀態記憶版")
+    st.sidebar.caption("V29.4 終極雙腦 + 大盤風控版")
     
     st.sidebar.header("📂 1. 數據引擎")
     uploaded_csvs = st.sidebar.file_uploader(
@@ -65,13 +71,22 @@ def main():
         except Exception as e:
             st.sidebar.error("檔案解析失敗，請確認是否為正確的 JSON 檔。")
     
-    tab1, tab2, tab3 = st.tabs(["🚀 雷達掃描室", "🛡️ 持股監控中心", "⏳ 時光膠囊 (AI 回測)"])
+    # 🛡️ V29.4 新增：將大盤風控加入第一個 Tab
+    tab0, tab1, tab2, tab3 = st.tabs(["🚦 大盤風控", "🚀 雷達掃描室", "🛡️ 持股監控中心", "⏳ 時光膠囊 (AI 回測)"])
     
+    with tab0:
+        if market_filter:
+            try:
+                market_filter.render_market_dashboard()
+            except Exception as e:
+                st.error(f"大盤風控模組執行錯誤: {e}")
+        else:
+            st.warning("⚠️ 找不到 `market_filter.py`，請確認大盤風控模組檔案存在。")
+
     with tab1:
         if uploaded_csvs and len(uploaded_csvs) > 0:
             if strategy_core:
                 try:
-                    # ⚠️ 軍師修正：移除 app.py 的按鈕封印，將控制權與記憶體完全交給 strategy_core
                     strategy_core.run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min)
                 except Exception as e:
                     st.error(f"雷達運算發生錯誤: {e}")
