@@ -3,7 +3,7 @@ import yfinance as yf
 import pandas as pd
 
 def render_portfolio_monitor():
-    st.header("🛡️ 總司令戰情儀表板 (V28.2 鐵血量化版)")
+    st.header("🛡️ 總司令戰情儀表板 (V29 雙腦協同版)")
     
     if 'portfolio' not in st.session_state or len(st.session_state['portfolio']) == 0:
         st.info("目前沒有監控中的持股。請從左側邊欄載入戰情包，或在此手動新增。")
@@ -34,45 +34,53 @@ def render_portfolio_monitor():
                     continue
                     
                 try:
-                    # 啟動 YFinance 雙引擎 (上市 .TW / 上櫃 .TWO)
+                    # ⚠️ 軍師修正：啟動 YFinance 雙引擎，並將視野擴展至 6mo 以計算季線
                     tkr = yf.Ticker(f"{code}.TW")
-                    hist = tkr.history(period="1mo")
+                    hist = tkr.history(period="6mo")
                     if hist.empty:
                         tkr = yf.Ticker(f"{code}.TWO")
-                        hist = tkr.history(period="1mo")
+                        hist = tkr.history(period="6mo")
                         
-                    if not hist.empty:
+                    if not hist.empty and len(hist) >= 60:
                         close = float(hist['Close'].iloc[-1])
                         ma5 = float(hist['Close'].rolling(window=5).mean().iloc[-1])
                         ma10 = float(hist['Close'].rolling(window=10).mean().iloc[-1])
                         ma20 = float(hist['Close'].rolling(window=20).mean().iloc[-1])
+                        ma60 = float(hist['Close'].rolling(window=60).mean().iloc[-1]) # 新增季線
                         
                         # 計算真實報酬率
                         ret_pct = ((close - cost) / cost) * 100 if cost > 0 else 0
                         
                         # ==========================================
-                        # ⚖️ V28 鐵血量化判決邏輯 (完全排除新聞干擾)
+                        # 🧠 V29 雙腦協同判決邏輯 (建倉防守與動能停利脫鉤)
                         # ==========================================
-                        if close < ma20 or ret_pct <= -5.0:
-                            status = "🔴 破線撤退 (破月線或虧損達5%)"
+                        if close < ma60:
+                            # 跌破季線，大人棄守，無條件死刑
+                            status = "🔴 季線死刑 (破MA60，無條件撤退)"
                             st.error(status)
+                        elif close < ma20:
+                            # 跌破月線但守住季線，判定為左腦建倉洗盤期
+                            status = "🟡 投信洗盤 (破月線，退守季線防護傘)"
+                            st.warning(status)
                         elif close < ma10:
-                            status = "🟡 弱勢泥搏 (破10MA，退守月線)"
+                            # 跌破10日線，動能休整
+                            status = "🟡 動能休整 (破10MA，觀察月線支撐)"
                             st.warning(status)
                         else:
-                            status = "🟢 強勢續抱 (站穩短均線)"
+                            # 站穩短均線，右腦主升段
+                            status = "🟢 強勢主升段 (站穩短均線，抱緊獲利)"
                             st.success(status)
                             
                         # 顯示核心數據
                         st.metric("最新收盤", f"{close:.2f}", f"{ret_pct:.2f}%")
-                        st.caption(f"5MA: {ma5:.2f} | 10MA: {ma10:.2f} | 20MA: {ma20:.2f}")
+                        st.caption(f"10MA: {ma10:.2f} | 20MA: {ma20:.2f} | 60MA: {ma60:.2f}")
                         
-                        # 計算距離 20MA 的空間 (防守縱深)
-                        dist_20ma = ((close - ma20) / ma20) * 100
-                        st.markdown(f"**距 20MA 空間: {dist_20ma:.2f}%**")
+                        # 計算距離 MA60 的空間 (真正的防守縱深)
+                        dist_60ma = ((close - ma60) / ma60) * 100
+                        st.markdown(f"**距季線(防守線)空間: {dist_60ma:.2f}%**")
                         
                     else:
-                        st.write("⚪ 無報價資料 (請確認代號是否正確)")
+                        st.write("⚪ 無報價資料或上市未滿一季")
                 except Exception as e:
                     st.write("⚪ 連線失敗")
                     
