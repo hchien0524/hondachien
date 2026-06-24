@@ -12,18 +12,15 @@ except ImportError:
 def load_and_clean_csv(file):
     encodings = ['big5-hkscs', 'cp950', 'utf-8', 'utf-8-sig']
     file_bytes = file.getvalue() 
-    
     for enc in encodings:
         try:
             text = file_bytes.decode(enc)
             lines = text.split('\n')
-            
             header_idx = -1
             for i, line in enumerate(lines[:15]):
                 if '代號' in line or '證券代號' in line:
                     header_idx = i
                     break
-            
             if header_idx != -1:
                 csv_data = '\n'.join(lines[header_idx:])
                 df = pd.read_csv(io.StringIO(csv_data), dtype=str, skipinitialspace=True)
@@ -40,7 +37,6 @@ def find_column(df, keywords):
                 return col
     return None
 
-# 🛠️ V29.2 回呼函數：強制寫入記憶體
 def add_targets_to_portfolio(selected_codes, default_cost, df):
     if 'portfolio' not in st.session_state:
         st.session_state['portfolio'] = []
@@ -51,17 +47,12 @@ def add_targets_to_portfolio(selected_codes, default_cost, df):
             existing["成本價"] = default_cost 
         else:
             st.session_state['portfolio'].append({
-                "代號": code,
-                "名稱": name,
-                "成本價": default_cost
+                "代號": code, "名稱": name, "成本價": default_cost
             })
 
 def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
     st.markdown("### 🧠 V29.3 終極雙腦評分雷達 (狀態記憶防閃退版)")
     
-    # ==========================================
-    # 1. 掃描引擎 (按下按鈕才執行，並將結果存入記憶體)
-    # ==========================================
     if st.button("🚀 啟動雷達掃描", type="primary"):
         progress_bar = st.progress(0)
         status_text = st.empty()
@@ -71,7 +62,6 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
         for file in uploaded_csvs:
             df = load_and_clean_csv(file)
             if df is None: continue
-                
             col_code = find_column(df, ['證券代號', '代號', 'Code'])
             col_name = find_column(df, ['證券名稱', '名稱', 'Name'])
             col_trust = find_column(df, ['投信買賣超', '投信-買賣超', '投信買超', '投信買賣超股數'])
@@ -79,7 +69,6 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
             if col_code and col_trust:
                 df[col_code] = df[col_code].astype(str).str.replace('=', '').str.replace('"', '').str.strip()
                 df[col_trust] = pd.to_numeric(df[col_trust].astype(str).str.replace(',', ''), errors='coerce').fillna(0) / 1000.0
-                
                 temp_df = df[[col_code, col_name, col_trust]].copy()
                 temp_df.columns = ['代號', '名稱', '投信買賣超']
                 all_data.append(temp_df)
@@ -90,10 +79,8 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
             
         merged_df = pd.concat(all_data)
         merged_df['買超天數'] = (merged_df['投信買賣超'] > 0).astype(int)
-        
         summary_df = merged_df.groupby(['代號', '名稱']).agg(
-            總買超=('投信買賣超', 'sum'),
-            連買天數=('買超天數', 'sum')
+            總買超=('投信買賣超', 'sum'), 連買天數=('買超天數', 'sum')
         ).reset_index()
 
         top_candidates = summary_df[summary_df['總買超'] > 0].copy()
@@ -112,7 +99,6 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
             if len(code) != 4: 
                 stats["yf_fail"] += 1
                 continue
-                
             try:
                 tkr = yf.Ticker(f"{code}.TW")
                 hist = tkr.history(period="6mo")
@@ -134,7 +120,6 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
                     if vol_5d < filter_vol_min:
                         stats["vol_fail"] += 1
                         continue
-                        
                     if close < ma60:
                         stats["ma60_fail"] += 1
                         continue
@@ -202,17 +187,11 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
                         strategy_type = "🛡️ 籌碼防禦 (左腦)"
                     
                     results.append({
-                        "代號": code,
-                        "名稱": row['名稱'],
-                        "投信總買超(張)": int(row['總買超']),
-                        "連買天數": row['連買天數'],
-                        "最新收盤": round(close, 2),
-                        "月線乖離(%)": round(bias_20, 2),
-                        "今日量比": round(vol_ratio, 1),
-                        "🤝 族群共振": display_resonance,
-                        "🛡️ 左腦分": left_brain_score,
-                        "🚀 右腦分": right_brain_score,
-                        "🔥 總分": round(total_score, 1),
+                        "代號": code, "名稱": row['名稱'], "投信總買超(張)": int(row['總買超']),
+                        "連買天數": row['連買天數'], "最新收盤": round(close, 2),
+                        "月線乖離(%)": round(bias_20, 2), "今日量比": round(vol_ratio, 1),
+                        "🤝 族群共振": display_resonance, "🛡️ 左腦分": left_brain_score,
+                        "🚀 右腦分": right_brain_score, "🔥 總分": round(total_score, 1),
                         "🎯 戰略屬性": strategy_type,
                         "🧠 右腦證據": ",".join(rb_evidence) if rb_evidence else "量縮洗盤中"
                     })
@@ -220,21 +199,17 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
                     stats["yf_fail"] += 1
             except:
                 stats["yf_fail"] += 1
-                
             progress_bar.progress(20 + int(((i + 1) / total_csv_stocks) * 75))
             
         status_text.text("⏳ [3/3] 彙整戰情報告...")
         progress_bar.progress(100)
         status_text.empty()
         
-        # ⚠️ 關鍵修復：將結果存入 session_state，避免重整消失
         st.session_state['radar_results'] = results
         st.session_state['radar_stats'] = stats
         st.session_state['radar_total_csv'] = total_csv_stocks
         st.session_state['filter_resonance'] = filter_resonance
-    # ==========================================
-    # 2. 渲染結果 (從記憶體讀取，不受按鈕重整影響)
-    # ==========================================
+
     if 'radar_results' in st.session_state:
         results = st.session_state['radar_results']
         stats = st.session_state['radar_stats']
@@ -270,9 +245,12 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
                 with col_btn:
                     st.write("") 
                     st.write("")
-                    # ⚠️ 關鍵修復：使用 on_click 強制執行存檔
                     st.button(
                         "➕ 加入監控中心", 
                         type="primary", 
                         use_container_width=True,
-                        on_click=add
+                        on_click=add_targets_to_portfolio,
+                        args=(selected_codes, default_cost, final_df)
+                    )
+        else:
+            st.warning("⚠️ 經過嚴格的技術面與籌碼面濾網，本次沒有標的符合條件。請查看上方的「擊殺報告」了解原因。")
