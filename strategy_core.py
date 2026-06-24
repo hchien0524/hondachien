@@ -41,7 +41,7 @@ def find_column(df, keywords):
     return None
 
 def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
-    st.markdown("### 🧠 V29.1 終極雙腦評分雷達 (戰略透視版)")
+    st.markdown("### 🧠 V29.2 終極雙腦評分雷達 (戰略透視與無縫鎖定版)")
     progress_bar = st.progress(0)
     status_text = st.empty()
     
@@ -60,7 +60,7 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
         
         if col_code and col_trust:
             df[col_code] = df[col_code].astype(str).str.replace('=', '').str.replace('"', '').str.strip()
-            # ⚠️ 軍師修復：強制除以 1000，將「股數」轉換為「張數」
+            # ⚠️ 單位修復：強制除以 1000，將「股數」轉換為「張數」
             df[col_trust] = pd.to_numeric(df[col_trust].astype(str).str.replace(',', ''), errors='coerce').fillna(0) / 1000.0
             
             temp_df = df[[col_code, col_name, col_trust]].copy()
@@ -188,7 +188,7 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
                 total_score = left_brain_score + right_brain_score
                 display_resonance = f"{sector} ({resonance_count}檔)" if sector != "其他/未分類" else "無共振"
                 
-                # 🎯 V29.1 新增：戰略屬性自動判定
+                # 🎯 V29.1 戰略屬性自動判定
                 if right_brain_score >= 40 and left_brain_score >= 45:
                     strategy_type = "🔥 雙腦共振 (主將)"
                 elif right_brain_score >= 40:
@@ -199,7 +199,7 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
                 results.append({
                     "代號": code,
                     "名稱": row['名稱'],
-                    "投信總買超(張)": int(row['總買超']), # 顯示為整數張數
+                    "投信總買超(張)": int(row['總買超']),
                     "連買天數": row['連買天數'],
                     "最新收盤": round(close, 2),
                     "月線乖離(%)": round(bias_20, 2),
@@ -232,12 +232,27 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
             st.markdown(f"❌ **無族群共振被殺**：`{stats['reso_fail']}` 檔 *(孤鳥股)*")
         st.markdown(f"✅ **最終存活真龍**：`{len(results)}` 檔")
     
+    # 🛠️ V29.2 新增：強制寫入記憶體的回呼函數 (破解按鈕陷阱)
+    def add_targets_to_portfolio(selected_codes, default_cost, df):
+        if 'portfolio' not in st.session_state:
+            st.session_state['portfolio'] = []
+        for code in selected_codes:
+            name = df[df['代號']==code]['名稱'].values[0]
+            existing = next((item for item in st.session_state['portfolio'] if item.get("代號") == code), None)
+            if existing:
+                existing["成本價"] = default_cost 
+            else:
+                st.session_state['portfolio'].append({
+                    "代號": code,
+                    "名稱": name,
+                    "成本價": default_cost
+                })
+
     if results:
         final_df = pd.DataFrame(results).sort_values('🔥 總分', ascending=False).reset_index(drop=True)
         st.success(f"🎯 掃描完成！共篩選出 {len(final_df)} 檔符合條件的標的。")
         st.dataframe(final_df, use_container_width=True)
         
-        # ➕ V29 新增：雷達直通監控中心 UI
         st.markdown("### 🎯 鎖定目標：加入戰情監控")
         with st.container(border=True):
             col_sel, col_cost, col_btn = st.columns([2, 1, 1])
@@ -252,25 +267,14 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
             with col_btn:
                 st.write("") 
                 st.write("")
-                if st.button("➕ 加入監控中心", type="primary", use_container_width=True):
-                    if 'portfolio' not in st.session_state:
-                        st.session_state['portfolio'] = []
-                        
-                    added_count = 0
-                    for code in selected_codes:
-                        name = final_df[final_df['代號']==code]['名稱'].values[0]
-                        existing = next((item for item in st.session_state['portfolio'] if item.get("代號") == code), None)
-                        if existing:
-                            existing["成本價"] = default_cost 
-                        else:
-                            st.session_state['portfolio'].append({
-                                "代號": code,
-                                "名稱": name,
-                                "成本價": default_cost
-                            })
-                        added_count += 1
-                        
-                    if added_count > 0:
-                        st.success(f"✅ 成功將 {added_count} 檔標的加入監控中心！請切換至 Tab 2 查看。")
+                # ⚠️ 關鍵修復：使用 on_click 強制執行存檔
+                st.button(
+                    "➕ 加入監控中心", 
+                    type="primary", 
+                    use_container_width=True,
+                    on_click=add_targets_to_portfolio,
+                    args=(selected_codes, default_cost, final_df)
+                )
+                
     else:
         st.warning("⚠️ 經過嚴格的技術面與籌碼面濾網，本次沒有標的符合條件。請查看上方的「擊殺報告」了解原因。")
