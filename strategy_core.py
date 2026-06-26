@@ -51,7 +51,7 @@ def add_targets_to_portfolio(selected_codes, default_cost, df):
             })
 
 def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
-    st.markdown("### 🧠 V29.3 終極雙腦評分雷達 (狀態記憶防閃退版)")
+    st.markdown("### 🧠 V29.5 終極雙腦評分雷達 (戰情簡報生成版)")
     
     if st.button("🚀 啟動雷達掃描", type="primary"):
         progress_bar = st.progress(0)
@@ -205,10 +205,36 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
         progress_bar.progress(100)
         status_text.empty()
         
+        # 🤖 產生 AI 戰略簡報 Prompt
+        top_sectors_str = ", ".join([f"{k}({v}檔)" for k, v in sector_counts.head(3).items()]) if not sector_counts.empty else "無明顯族群"
+        survivors_str = ""
+        for r in sorted(results, key=lambda x: x['🔥 總分'], reverse=True):
+            survivors_str += f"- [{r['代號']}] {r['名稱']} (總分:{r['🔥 總分']} | 屬性:{r['🎯 戰略屬性']} | 乖離:{r['月線乖離(%)']}%)\n"
+        if not survivors_str:
+            survivors_str = "- 無標的存活\n"
+
+        prompt_text = f"""【HIOS Wave Radar V29 戰情交接包】
+請 Manus 首席軍師接收以下雷達掃描數據，並結合今日大盤風控燈號與最新聯網情報，為我進行深度戰略推演：
+
+📊 1. 原始籌碼熱力圖 (投信真正的主戰場)：
+- 總掃描檔數：{total_csv_stocks} 檔
+- 投信買超前三大族群：{top_sectors_str}
+
+☠️ 2. 雷達擊殺報告 (市場真實的洗盤/過熱狀況)：
+- 跌破季線死刑：{stats['ma60_fail']} 檔 (趨勢轉空)
+- 乖離過大被殺：{stats['bias_max_fail']} 檔 (追高風險/投信結帳區)
+- 流動性/無共振淘汰：{stats['vol_fail'] + stats['reso_fail']} 檔
+
+🏆 3. 最終存活菁英 (請針對以下標的進行聯網與盈虧比分析)：
+{survivors_str}
+💡 總司令指示：
+請先判斷上述「原始熱力圖」與「存活菁英」是否存在資金錯位？並結合目前外資空單水位，告訴我這幾檔菁英是「真建倉」還是「假突破」？給出具體的資金分配與防守建議！"""
+
         st.session_state['radar_results'] = results
         st.session_state['radar_stats'] = stats
         st.session_state['radar_total_csv'] = total_csv_stocks
         st.session_state['filter_resonance'] = filter_resonance
+        st.session_state['strategy_prompt'] = prompt_text
 
     if 'radar_results' in st.session_state:
         results = st.session_state['radar_results']
@@ -230,6 +256,11 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
             final_df = pd.DataFrame(results).sort_values('🔥 總分', ascending=False).reset_index(drop=True)
             st.success(f"🎯 掃描完成！共篩選出 {len(final_df)} 檔符合條件的標的。")
             st.dataframe(final_df, use_container_width=True)
+            
+            # 🤖 新增：一鍵生成 AI 戰略簡報區塊
+            st.markdown("### 🤖 一鍵生成 AI 戰略簡報")
+            st.caption("💡 點擊程式碼區塊右上角的「複製」按鈕，直接貼給 Manus 進行深度戰略討論！")
+            st.code(st.session_state.get('strategy_prompt', ''), language="markdown")
             
             st.markdown("### 🎯 鎖定目標：加入戰情監控")
             with st.container(border=True):
@@ -254,3 +285,7 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
                     )
         else:
             st.warning("⚠️ 經過嚴格的技術面與籌碼面濾網，本次沒有標的符合條件。請查看上方的「擊殺報告」了解原因。")
+            if 'strategy_prompt' in st.session_state:
+                st.markdown("### 🤖 一鍵生成 AI 戰略簡報")
+                st.caption("💡 即使沒有標的存活，您依然可以將擊殺報告貼給 Manus，分析資金撤退方向！")
+                st.code(st.session_state['strategy_prompt'], language="markdown")
