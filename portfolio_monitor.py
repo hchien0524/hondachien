@@ -1,100 +1,108 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import numpy as np
 
 def render_portfolio_monitor():
-    st.header("🛡️ 總司令戰情儀表板 (V30 旗艦視覺版)")
+    st.header("🛡️ 總司令戰情儀表板 (V30 動態停利版)")
+    st.caption("導入法人級【三階段動態停利】與【季線防守血條】，抱得住大波段，躲得過大洗盤！")
     
     if 'portfolio' not in st.session_state or len(st.session_state['portfolio']) == 0:
-        st.info("目前沒有監控中的持股。請從左側邊欄載入戰情包，或在雷達掃描後加入。")
+        st.info("目前沒有監控中的持股。請從左側邊欄載入戰情包，或在雷達掃描室中加入。")
         return
 
-    portfolio = st.session_state['portfolio']
+    total_stocks = len(st.session_state['portfolio'])
+    st.markdown(f"**監控總檔數：{total_stocks} 檔**")
     
-    # ==========================================
-    # 💰 總司令資產總覽 (新增功能)
-    # ==========================================
-    st.markdown("### 💰 總資產儀表板")
-    total_cost_value = 0.0
-    total_current_value = 0.0
-    
-    # 預先抓取報價與季線資料
-    stock_data_cache = {}
-    with st.spinner("📡 正在同步最新報價與季線防守數據..."):
-        for item in portfolio:
-            code = item.get('代號', item.get('code', ''))
-            qty = float(item.get('張數', 1))
-            cost = float(item.get('成本價', 0.0))
-            
-            if code and cost > 0:
-                try:
-                    tkr = yf.Ticker(f"{code}.TW")
-                    hist = tkr.history(period="6mo")
-                    if hist.empty:
-                        tkr = yf.Ticker(f"{code}.TWO")
-                        hist = tkr.history(period="6mo")
-                    if not hist.empty and len(hist) >= 60:
-                        close = float(hist['Close'].iloc[-1])
-                        ma60 = float(hist['Close'].rolling(window=60).mean().iloc[-1])
-                        stock_data_cache[code] = {"close": close, "ma60": ma60}
-                        
-                        total_cost_value += (cost * qty * 1000)
-                        total_current_value += (close * qty * 1000)
-                except:
-                    pass
-
-    # 顯示總資產數據
-    if total_cost_value > 0:
-        total_ret_pct = ((total_current_value - total_cost_value) / total_cost_value) * 100
-        total_pnl = total_current_value - total_cost_value
-        
-        col_t1, col_t2, col_t3 = st.columns(3)
-        col_t1.metric("總投入本金", f"${total_cost_value:,.0f}")
-        col_t2.metric("目前總市值", f"${total_current_value:,.0f}")
-        col_t3.metric("總未實現損益", f"${total_pnl:,.0f}", f"{total_ret_pct:.2f}%")
-    
-    st.markdown("---")
-    st.markdown(f"**監控總檔數：{len(portfolio)} 檔**")
-    
-    # ==========================================
-    # 🛡️ 個股防守卡片 (季線血條升級)
-    # ==========================================
+    # 建立三欄式的卡片排版
     cols = st.columns(3)
-    for idx, item in enumerate(portfolio):
-        code = item.get('代號', item.get('code', ''))
-        name = item.get('名稱', item.get('name', ''))
-        cost = float(item.get('成本價', 0.0))
-        qty = float(item.get('張數', 1))
+    
+    for idx, item in enumerate(st.session_state['portfolio']):
+        # 完美相容各種 JSON 欄位命名
+        code = item.get('code', item.get('Ticker', item.get('代號', '')))
+        name = item.get('name', item.get('Name', item.get('名稱', '')))
+        cost = float(item.get('cost', item.get('Cost', item.get('成本', 0.0))))
         
         with cols[idx % 3]:
             card_container = st.container(border=True)
             with card_container:
-                st.markdown(f"### 🎯 [{code}] {name}")
-                st.write(f"建倉成本: **{cost:.2f}** | 張數: **{qty}**")
+                # 標題動態顯示名稱
+                display_title = f"### 🎯 [{code}] {name}" if name else f"### 🎯 [{code}]"
+                st.markdown(display_title)
+                st.write(f"建倉成本: **{cost:.2f}**")
                 
-                if code in stock_data_cache:
-                    data = stock_data_cache[code]
-                    close = data["close"]
-                    ma60 = data["ma60"]
+                if not code:
+                    st.write("⚪ 無效的股票代號")
+                    continue
                     
-                    ret_pct = ((close - cost) / cost) * 100 if cost > 0 else 0
-                    dist_ma60 = ((close - ma60) / ma60) * 100
-                    
-                    st.metric("最新收盤", f"{close:.2f}", f"{ret_pct:.2f}%")
-                    
-                    # 🩸 季線防守血條 UI
-                    st.markdown("**🛡️ 季線防守縱深 (MA60)**")
-                    if dist_ma60 >= 5:
-                        st.success(f"🟢 安全區 | 距季線 +{dist_ma60:.2f}%")
-                    elif dist_ma60 >= 0:
-                        st.warning(f"🟡 警戒區 | 距季線 +{dist_ma60:.2f}%")
-                    else:
-                        st.error(f"🔴 破線死刑 | 距季線 {dist_ma60:.2f}%")
+                try:
+                    # ⚠️ 關鍵升級：必須抓 4 個月才有足夠的 K 棒算 MA60 (季線)
+                    tkr = yf.Ticker(f"{code}.TW")
+                    hist = tkr.history(period="4mo")
+                    if hist.empty:
+                        tkr = yf.Ticker(f"{code}.TWO")
+                        hist = tkr.history(period="4mo")
                         
-                    st.caption(f"季線位置: {ma60:.2f}")
-                else:
-                    st.write("⚪ 報價讀取中或連線失敗")
+                    if not hist.empty and len(hist) >= 20:
+                        close = float(hist['Close'].iloc[-1])
+                        ma5 = float(hist['Close'].rolling(window=5).mean().iloc[-1])
+                        ma10 = float(hist['Close'].rolling(window=10).mean().iloc[-1])
+                        ma20 = float(hist['Close'].rolling(window=20).mean().iloc[-1])
+                        
+                        # 處理新上市股票沒有 MA60 的問題
+                        if len(hist) >= 60:
+                            ma60 = float(hist['Close'].rolling(window=60).mean().iloc[-1])
+                        else:
+                            ma60 = ma20 # 若無季線，以月線作為終極防線
+                        
+                        # 計算真實報酬率與乖離
+                        ret_pct = ((close - cost) / cost) * 100 if cost > 0 else 0
+                        bias_20 = ((close - ma20) / ma20) * 100
+                        dist_60ma = ((close - ma60) / ma60) * 100
+                        
+                        # ==========================================
+                        # ⚖️ V30 動態停利與鐵血停損邏輯
+                        # ==========================================
+                        if close < ma60 or ret_pct <= -5.0:
+                            status = "☠️ 死刑撤退 (破季線或虧損達5%)"
+                            st.error(status)
+                        elif close < ma20:
+                            status = "🛑 波段停利 (跌破月線，全面清倉)"
+                            st.error(status)
+                        elif bias_20 >= 15.0:
+                            status = "🚨 乖離過熱 (建議減碼 1/3 放口袋)"
+                            st.warning(status)
+                        elif close < ma10:
+                            status = "🟡 正常洗盤 (破10MA，底倉續抱)"
+                            st.warning(status)
+                        else:
+                            status = "🟢 強勢續抱 (站穩短均線)"
+                            st.success(status)
+                            
+                        # 顯示核心數據
+                        st.metric("最新收盤", f"{close:.2f}", f"{ret_pct:.2f}%")
+                        st.caption(f"月線(20MA): {ma20:.2f} | 季線(60MA): {ma60:.2f}")
+                        
+                        # 🛡️ 季線防守血條 (視覺化)
+                        st.markdown(f"**🛡️ 距季線防守空間: `{dist_60ma:.2f}%`**")
+                        
+                        # 動態血條長度與顏色計算
+                        hp_val = max(0.0, min(100.0, 50 + dist_60ma * 2)) # 基準50，每1%加減2
+                        hp_color = "#00cc66" if dist_60ma > 0 else "#ff3333"
+                        st.markdown(
+                            f"""
+                            <div style="width: 100%; background-color: #444444; border-radius: 5px; margin-bottom: 10px;">
+                              <div style="width: {hp_val}%; height: 8px; background-color: {hp_color}; border-radius: 5px;"></div>
+                            </div>
+                            """, unsafe_allow_html=True
+                        )
+                        
+                    else:
+                        st.write("⚪ 無足夠報價資料 (請確認代號)")
+                except Exception as e:
+                    st.write("⚪ 連線失敗")
                     
-                if st.button("🗑️ 撤退/刪除", key=f"del_{idx}"):
+                # 刪除按鈕
+                if st.button("🗑️ 撤退/刪除", key=f"del_{idx}", use_container_width=True):
                     st.session_state['portfolio'].pop(idx)
                     st.rerun()
