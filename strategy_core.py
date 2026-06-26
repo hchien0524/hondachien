@@ -51,7 +51,7 @@ def add_targets_to_portfolio(selected_codes, default_cost, df):
             })
 
 def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
-    st.markdown("### 🧠 V29.5 終極雙腦評分雷達 (戰情簡報生成版)")
+    st.markdown("### 🧠 V29.6 終極雙腦評分雷達 (純淨鐵門版)")
     
     if st.button("🚀 啟動雷達掃描", type="primary"):
         progress_bar = st.progress(0)
@@ -68,13 +68,19 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
             
             if col_code and col_trust:
                 df[col_code] = df[col_code].astype(str).str.replace('=', '').str.replace('"', '').str.strip()
+                
+                # ==========================================
+                # 🛡️ 絕對鐵門：只保留 4 碼純數字的普通股 (排除 0 開頭的 ETF 與權證)
+                # ==========================================
+                df = df[df[col_code].str.match(r'^[1-9]\d{3}$', na=False)]
+                
                 df[col_trust] = pd.to_numeric(df[col_trust].astype(str).str.replace(',', ''), errors='coerce').fillna(0) / 1000.0
                 temp_df = df[[col_code, col_name, col_trust]].copy()
                 temp_df.columns = ['代號', '名稱', '投信買賣超']
                 all_data.append(temp_df)
                 
         if not all_data:
-            st.error("❌ CSV 解析失敗：找不到『代號』或『投信買賣超』欄位。")
+            st.error("❌ CSV 解析失敗：找不到『代號』或『投信買賣超』欄位，或檔案中無符合條件的個股。")
             return
             
         merged_df = pd.concat(all_data)
@@ -89,16 +95,13 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
         
         total_csv_stocks = len(top_candidates)
         progress_bar.progress(20)
-        status_text.text(f"⏳ [2/3] 啟動 YFinance 引擎：檢驗 {total_csv_stocks} 檔標的...")
+        status_text.text(f"⏳ [2/3] 啟動 YFinance 引擎：檢驗 {total_csv_stocks} 檔純淨標的...")
         
         results = []
         stats = {"yf_fail": 0, "vol_fail": 0, "ma60_fail": 0, "bias_max_fail": 0, "reso_fail": 0}
         
         for i, (idx, row) in enumerate(top_candidates.iterrows()):
             code = row['代號']
-            if len(code) != 4: 
-                stats["yf_fail"] += 1
-                continue
             try:
                 tkr = yf.Ticker(f"{code}.TW")
                 hist = tkr.history(period="6mo")
@@ -223,7 +226,7 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
 - {calendar_alert}
 
 📊 1. 原始籌碼熱力圖 (投信真正的主戰場)：
-- 總掃描檔數：{total_csv_stocks} 檔
+- 總掃描純淨個股數：{total_csv_stocks} 檔 (已排除 ETF)
 - 投信買超前三大族群：{top_sectors_str}
 
 ☠️ 2. 雷達擊殺報告 (市場真實的洗盤/過熱狀況)：
@@ -235,7 +238,6 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
 {survivors_str}
 💡 總司令指示：
 請先判斷上述「原始熱力圖」與「存活菁英」是否存在資金錯位？並結合目前外資空單水位，告訴我這幾檔菁英是「真建倉」還是「假突破」？給出具體的資金分配與防守建議！"""
-       
 
         st.session_state['radar_results'] = results
         st.session_state['radar_stats'] = stats
@@ -250,7 +252,7 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
         saved_filter_resonance = st.session_state.get('filter_resonance', True)
         
         with st.expander("🛠️ 雷達濾網擊殺報告 (點擊展開看真相)", expanded=False):
-            st.markdown(f"**CSV 原始投信買超檔數**：`{total_csv_stocks}` 檔")
+            st.markdown(f"**CSV 原始投信買超純淨個股數**：`{total_csv_stocks}` 檔 *(已排除 ETF)*")
             st.markdown(f"❌ **無報價/連線失敗**：`{stats['yf_fail']}` 檔")
             st.markdown(f"❌ **流動性不足被殺**：`{stats['vol_fail']}` 檔")
             st.markdown(f"❌ **跌破季線死刑**：`{stats['ma60_fail']}` 檔")
@@ -264,7 +266,6 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
             st.success(f"🎯 掃描完成！共篩選出 {len(final_df)} 檔符合條件的標的。")
             st.dataframe(final_df, use_container_width=True)
             
-            # 🤖 新增：一鍵生成 AI 戰略簡報區塊
             st.markdown("### 🤖 一鍵生成 AI 戰略簡報")
             st.caption("💡 點擊程式碼區塊右上角的「複製」按鈕，直接貼給 Manus 進行深度戰略討論！")
             st.code(st.session_state.get('strategy_prompt', ''), language="markdown")
