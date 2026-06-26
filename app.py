@@ -100,21 +100,11 @@ def main():
         portfolio_monitor.render_portfolio_monitor()
 
     with tab3:
-        st.header("⏳ 時光膠囊 (AI 參數網格搜索)")
-        st.caption("回到過去特定日期，尋找當下勝率最高的最佳參數組合。")
-        
-        col_t1, col_t2 = st.columns(2)
-        with col_t1:
-            target_date = st.date_input("選擇回測基準日")
-        with col_t2:
-            st.write("")
-            st.write("")
-            if st.button("啟動 AI 網格搜索", use_container_width=True):
-                if backtest_engine:
-                    with st.spinner(f"🕰️ 正在啟動時光機，回到 {target_date} 進行參數最佳化..."):
-                        backtest_engine.run_grid_search(target_date)
-                else:
-                    st.warning("⚠️ 找不到 `backtest_engine.py`，請確認回測引擎檔案存在。")
+            with tab3:
+        if backtest_engine:
+            backtest_engine.render_time_capsule()
+        else:
+            st.warning("⚠️ 找不到 `backtest_engine.py`，請確認回測引擎檔案存在。")
 
 if __name__ == "__main__":
     main()
