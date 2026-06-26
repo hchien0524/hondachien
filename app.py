@@ -100,7 +100,6 @@ def main():
         portfolio_monitor.render_portfolio_monitor()
 
     with tab3:
-            with tab3:
         if backtest_engine:
             backtest_engine.render_time_capsule()
         else:
