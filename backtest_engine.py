@@ -1,92 +1,105 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
-import base64
+import yfinance as yf
 import json
-from datetime import datetime, timedelta
+import base64
 
-def run_grid_search(target_date):
-    """
-    V29 升級版：戰情快照驗證引擎 (Out-of-Sample Forward Testing)
-    取代舊有的全市場網格搜索，改為驗證「過去的戰情包」至今的真實戰果。
-    """
-    st.markdown("### ⏳ V29 戰情快照驗證引擎")
-    st.info("請在下方貼上您過去某日儲存的「Base64 戰情壓縮包」，系統將自動追蹤至今的真實戰果。")
-
-    import_str = st.text_area("📥 貼上歷史戰情壓縮包 (Base64 代碼)", height=100)
+def render_time_capsule():
+    st.markdown("### ⏳ V29.5 戰情快照回測引擎 (時光膠囊)")
+    st.info("💡 由於缺乏全市場歷史資料庫，本引擎採用「快照驗證法」。請貼上您過去儲存的戰情壓縮包 (Base64)，系統將自動比對當時建倉成本與今日時價，驗證 V29 季線防守邏輯的真實勝率！")
     
-    if st.button("🚀 啟動時光機軌跡追蹤", type="primary", use_container_width=True):
-        if not import_str:
-            st.warning("⚠️ 請先貼上壓縮包代碼！")
+    b64_input = st.text_area("📥 貼上過去的戰情壓縮包 (Base64 代碼)：", height=100, help="請從左側邊欄的『記憶模組』中複製過去的戰情包代碼貼於此處。")
+    
+    if st.button("🚀 啟動時光機進行回測", type="primary"):
+        if not b64_input:
+            st.warning("⚠️ 請先貼上戰情壓縮包代碼！")
             return
             
         try:
-            decoded = base64.b64decode(import_str).decode()
-            past_portfolio = json.loads(decoded)
+            decoded = base64.b64decode(b64_input).decode('utf-8')
+            portfolio = json.loads(decoded)
         except Exception as e:
-            st.error("❌ 壓縮包代碼解析失敗，請確認格式是否正確。")
+            st.error("❌ 解析失敗，請確認代碼是否完整且為正確的 Base64 格式。")
             return
-
-        if not past_portfolio:
-            st.warning("⚠️ 該壓縮包內無持股資料。")
+            
+        if not portfolio:
+            st.warning("⚠️ 戰情包為空，沒有標的可供回測！")
             return
-
-        st.success(f"📦 成功載入 {len(past_portfolio)} 檔歷史標的，正在啟動 YFinance 軌跡追蹤...")
-        progress_bar = st.progress(0)
-
+            
+        st.success(f"✅ 成功解析戰情包，共 {len(portfolio)} 檔標的。正在啟動 YFinance 雙引擎進行時價比對...")
+        
         results = []
-        for i, item in enumerate(past_portfolio):
-            code = item.get('代號', item.get('code', ''))
-            cost = float(item.get('成本價', item.get('cost', item.get('成本', 0.0))))
-
-            if not code: continue
-
+        win_count = 0
+        stop_loss_count = 0
+        total_return = 0.0
+        
+        progress_bar = st.progress(0)
+        
+        for i, item in enumerate(portfolio):
+            # 相容各種 JSON 欄位命名
+            code = item.get('代號', item.get('code', item.get('Ticker', '')))
+            name = item.get('名稱', item.get('name', item.get('Name', '')))
+            cost = float(item.get('成本價', item.get('cost', item.get('Cost', 0.0))))
+            
+            if not code or cost == 0:
+                continue
+                
             try:
-                # 抓取從目標日期到今天的數據
                 tkr = yf.Ticker(f"{code}.TW")
-                hist = tkr.history(start=target_date.strftime('%Y-%m-%d'))
+                hist = tkr.history(period="6mo")
                 if hist.empty:
                     tkr = yf.Ticker(f"{code}.TWO")
-                    hist = tkr.history(start=target_date.strftime('%Y-%m-%d'))
-
-                if not hist.empty and len(hist) > 0:
-                    highest_price = float(hist['High'].max())
-                    lowest_price = float(hist['Low'].min())
-                    current_price = float(hist['Close'].iloc[-1])
-
-                    # 計算績效
-                    max_profit_pct = ((highest_price - cost) / cost) * 100 if cost > 0 else 0
-                    mdd_pct = ((lowest_price - highest_price) / highest_price) * 100 if highest_price > 0 else 0
-                    current_ret_pct = ((current_price - cost) / cost) * 100 if cost > 0 else 0
-
-                    # 抓取半年數據以計算目前的 MA60 季線狀態
-                    hist_6mo = tkr.history(period="6mo")
-                    status = "未知"
-                    if not hist_6mo.empty and len(hist_6mo) >= 60:
-                        ma60 = float(hist_6mo['Close'].rolling(window=60).mean().iloc[-1])
-                        if current_price < ma60:
-                            status = "🔴 已陣亡 (跌破季線)"
-                        else:
-                            status = "🟢 存活 (守住季線)"
-
+                    hist = tkr.history(period="6mo")
+                    
+                if not hist.empty and len(hist) >= 60:
+                    current_close = float(hist['Close'].iloc[-1])
+                    ma60 = float(hist['Close'].rolling(window=60).mean().iloc[-1])
+                    
+                    # 計算真實報酬率
+                    ret_pct = ((current_close - cost) / cost) * 100
+                    total_return += ret_pct
+                    
+                    if ret_pct > 0:
+                        win_count += 1
+                        
+                    # V29 鐵血判決邏輯
+                    if current_close < ma60:
+                        status = "☠️ 跌破季線 (已停損)"
+                        stop_loss_count += 1
+                    elif ret_pct < 0:
+                        status = "🟡 帳面浮虧 (季線防守中)"
+                    else:
+                        status = "🟢 獲利續抱"
+                        
                     results.append({
                         "代號": code,
-                        "當時成本": cost,
-                        "最高漲幅": f"+{max_profit_pct:.1f}%",
-                        "最大回撤(MDD)": f"{mdd_pct:.1f}%",
-                        "至今報酬": f"{current_ret_pct:.1f}%",
-                        "V29 判定": status
+                        "名稱": name,
+                        "當時建倉成本": cost,
+                        "今日收盤價": round(current_close, 2),
+                        "季線位置(MA60)": round(ma60, 2),
+                        "報酬率(%)": round(ret_pct, 2),
+                        "當前狀態": status
                     })
             except Exception as e:
                 pass
-
-            progress_bar.progress((i + 1) / len(past_portfolio))
-
+                
+            progress_bar.progress((i + 1) / len(portfolio))
+            
         if results:
             df_res = pd.DataFrame(results)
-            st.markdown("### 🎯 V29 紀律驗證報告")
-            st.dataframe(df_res, use_container_width=True)
+            avg_ret = total_return / len(results)
+            win_rate = (win_count / len(results)) * 100
             
-            # 總結算
-            survived = len([r for r in results if "存活" in r["V29 判定"]])
-            st.info(f"**戰場總結**：當時建倉的 {len(results)} 檔標的中，若嚴格遵守 V29 季線防守紀律，目前共有 **{survived}** 檔存活。")
+            st.markdown("---")
+            st.subheader("📊 回測績效報告")
+            
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("總回測檔數", f"{len(results)} 檔")
+            col2.metric("勝率 (Win Rate)", f"{win_rate:.1f}%")
+            col3.metric("平均報酬率", f"{avg_ret:.2f}%")
+            col4.metric("觸發季線停損", f"{stop_loss_count} 檔")
+            
+            # 顯示詳細報表
+            st.dataframe(df_res, use_container_width=True)
+        else:
+            st.error("❌ 無法獲取報價資料進行回測，請確認代號是否正確。")
