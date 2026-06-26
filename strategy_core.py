@@ -206,14 +206,21 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
         status_text.empty()
         
         # 🤖 產生 AI 戰略簡報 Prompt
-                # 🤖 產生 AI 戰略簡報 Prompt
         top_sectors_str = ", ".join([f"{k}({v}檔)" for k, v in sector_counts.head(3).items()]) if not sector_counts.empty else "無明顯族群"
         survivors_str = ""
         for r in sorted(results, key=lambda x: x['🔥 總分'], reverse=True):
             survivors_str += f"- [{r['代號']}] {r['名稱']} (總分:{r['🔥 總分']} | 屬性:{r['🎯 戰略屬性']} | 乖離:{r['月線乖離(%)']}%)\n"
-        
+        if not survivors_str:
+            survivors_str = "- 無標的存活\n"
+            
+        # 讀取日曆警報 (若無則顯示平靜)
+        calendar_alert = st.session_state.get('calendar_alert_text', '🟢 【平靜期】目前無重大日曆事件')
+
         prompt_text = f"""【HIOS Wave Radar V29 戰情交接包】
 請 Manus 首席軍師接收以下雷達掃描數據，並結合今日大盤風控燈號與最新聯網情報，為我進行深度戰略推演：
+
+📅 0. 日曆風險參數：
+- {calendar_alert}
 
 📊 1. 原始籌碼熱力圖 (投信真正的主戰場)：
 - 總掃描檔數：{total_csv_stocks} 檔
@@ -228,6 +235,7 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
 {survivors_str}
 💡 總司令指示：
 請先判斷上述「原始熱力圖」與「存活菁英」是否存在資金錯位？並結合目前外資空單水位，告訴我這幾檔菁英是「真建倉」還是「假突破」？給出具體的資金分配與防守建議！"""
+       
 
         st.session_state['radar_results'] = results
         st.session_state['radar_stats'] = stats
