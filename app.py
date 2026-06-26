@@ -52,7 +52,7 @@ def main():
     filter_resonance = st.sidebar.checkbox("🤝 嚴格族群濾網 (共振 >= 3)", value=True)
     
     # ==========================================
-    # 🔌 掛載 Base64 記憶模組 (取代舊版 JSON)
+    # 🔌 掛載 Base64 記憶模組
     # ==========================================
     if memory_module:
         memory_module.render_memory_module()
@@ -60,7 +60,7 @@ def main():
         st.sidebar.warning("⚠️ 找不到 `memory_module.py`")
 
     # ==========================================
-    # 🚦 掛載大盤風控與時間感知引擎 (置頂顯示)
+    # 🚦 掛載大盤風控與時間感知引擎
     # ==========================================
     if market_filter:
         market_filter.render_market_dashboard()
@@ -74,15 +74,15 @@ def main():
         st.header("🚀 雷達掃描室 (雙腦評分系統)")
         if uploaded_csvs and len(uploaded_csvs) > 0:
             st.info(f"📂 已成功載入 {len(uploaded_csvs)} 份 CSV 檔案，準備啟動內部迴圈。")
-            if st.button("啟動雷達掃描", type="primary"):
-                if strategy_core:
-                    try:
-                        with st.spinner("📡 正在執行 CSV 內部迴圈與籌碼動能分析..."):
-                            strategy_core.run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min)
-                    except Exception as e:
-                        st.error(f"雷達運算發生錯誤: {e}")
-                else:
-                    st.warning("⚠️ 找不到 `strategy_core.py`，請確認核心邏輯檔案存在。")
+            
+            # 🛠️ 關鍵修復：移除 app.py 的按鈕，直接呼叫 strategy_core，讓它接管 UI
+            if strategy_core:
+                try:
+                    strategy_core.run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min)
+                except Exception as e:
+                    st.error(f"雷達運算發生錯誤: {e}")
+            else:
+                st.warning("⚠️ 找不到 `strategy_core.py`，請確認核心邏輯檔案存在。")
         else:
             st.info("👈 請先從左側邊欄上傳「法人買賣超 CSV (可多選)」以啟動雷達。")
             
