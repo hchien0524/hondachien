@@ -18,10 +18,10 @@ def render_portfolio_monitor():
     cols = st.columns(3)
     
     for idx, item in enumerate(st.session_state['portfolio']):
-        # 完美相容各種 JSON 欄位命名
+        # ⚠️ 終極修復：完美相容「成本」與「成本價」等各種 JSON 欄位命名
         code = item.get('code', item.get('Ticker', item.get('代號', '')))
         name = item.get('name', item.get('Name', item.get('名稱', '')))
-        cost = float(item.get('cost', item.get('Cost', item.get('成本', 0.0))))
+        cost = float(item.get('cost', item.get('Cost', item.get('成本', item.get('成本價', 0.0)))))
         
         with cols[idx % 3]:
             card_container = st.container(border=True)
@@ -36,7 +36,7 @@ def render_portfolio_monitor():
                     continue
                     
                 try:
-                    # ⚠️ 關鍵升級：必須抓 4 個月才有足夠的 K 棒算 MA60 (季線)
+                    # 抓 4 個月才有足夠的 K 棒算 MA60 (季線)
                     tkr = yf.Ticker(f"{code}.TW")
                     hist = tkr.history(period="4mo")
                     if hist.empty:
