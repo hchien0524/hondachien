@@ -47,13 +47,11 @@ def add_targets_to_portfolio(selected_codes, default_cost, df):
             existing["成本價"] = default_cost 
         else:
             st.session_state['portfolio'].append({
-                "代號": code, "名稱": name, "成本價": default_cost
+                "代號": code, "名稱": name, "成本價": default_cost, "張數": 1
             })
 
 def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
-    st.markdown("### 🧠 V29.6 終極雙腦評分雷達 (純淨鐵門版)")
-    
-    if st.button("🚀 啟動雷達掃描", type="primary"):
+    if st.button("🚀 啟動雷達掃描", type="primary", use_container_width=True):
         progress_bar = st.progress(0)
         status_text = st.empty()
         status_text.text("⏳ [1/3] 執行 CSV 內部迴圈：解析所有法人籌碼...")
@@ -69,9 +67,7 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
             if col_code and col_trust:
                 df[col_code] = df[col_code].astype(str).str.replace('=', '').str.replace('"', '').str.strip()
                 
-                # ==========================================
-                # 🛡️ 絕對鐵門：只保留 4 碼純數字的普通股 (排除 0 開頭的 ETF 與權證)
-                # ==========================================
+                # 🛡️ 絕對鐵門：排除 0 開頭 ETF 與權證
                 df = df[df[col_code].str.match(r'^[1-9]\d{3}$', na=False)]
                 
                 df[col_trust] = pd.to_numeric(df[col_trust].astype(str).str.replace(',', ''), errors='coerce').fillna(0) / 1000.0
@@ -216,10 +212,9 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
         if not survivors_str:
             survivors_str = "- 無標的存活\n"
             
-        # 讀取日曆警報 (若無則顯示平靜)
         calendar_alert = st.session_state.get('calendar_alert_text', '🟢 【平靜期】目前無重大日曆事件')
 
-        prompt_text = f"""【HIOS Wave Radar V29 戰情交接包】
+        prompt_text = f"""【HIOS Wave Radar V30 戰情交接包】
 請 Manus 首席軍師接收以下雷達掃描數據，並結合今日大盤風控燈號與最新聯網情報，為我進行深度戰略推演：
 
 📅 0. 日曆風險參數：
@@ -264,7 +259,33 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
         if results:
             final_df = pd.DataFrame(results).sort_values('🔥 總分', ascending=False).reset_index(drop=True)
             st.success(f"🎯 掃描完成！共篩選出 {len(final_df)} 檔符合條件的標的。")
-            st.dataframe(final_df, use_container_width=True)
+            
+            # ==========================================
+            # 🎨 V30 旗艦視覺化數據表 (Data Grid UI)
+            # ==========================================
+            st.dataframe(
+                final_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "代號": st.column_config.TextColumn("代號", width="small"),
+                    "名稱": st.column_config.TextColumn("名稱", width="small"),
+                    "投信總買超(張)": st.column_config.NumberColumn("投信買超", format="%d 張"),
+                    "連買天數": st.column_config.NumberColumn("連買", format="%d 天"),
+                    "最新收盤": st.column_config.NumberColumn("收盤價", format="%.2f"),
+                    "月線乖離(%)": st.column_config.NumberColumn("月線乖離", format="%.2f %%"),
+                    "今日量比": st.column_config.NumberColumn("量比", format="%.1f x"),
+                    "🔥 總分": st.column_config.ProgressColumn(
+                        "🔥 總分",
+                        help="雙腦評分加總 (滿分約 150)",
+                        format="%d",
+                        min_value=0,
+                        max_value=150
+                    ),
+                    "🎯 戰略屬性": st.column_config.TextColumn("戰略屬性", width="medium"),
+                    "🧠 右腦證據": st.column_config.TextColumn("動能證據", width="medium")
+                }
+            )
             
             st.markdown("### 🤖 一鍵生成 AI 戰略簡報")
             st.caption("💡 點擊程式碼區塊右上角的「複製」按鈕，直接貼給 Manus 進行深度戰略討論！")
