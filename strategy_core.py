@@ -122,13 +122,29 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
     
     for i, (idx, row) in enumerate(top_candidates.iterrows()):
         code = row['代號']
+        
+        # ==========================================
+        # 🚀 V30.1 雙軌抓價引擎 (完美修復版)
+        # ==========================================
+        hist = pd.DataFrame()
+        
+        # 步驟 1：獨立嘗試抓取上市 (.TW)
         try:
             tkr = yf.Ticker(f"{code}.TW")
             hist = tkr.history(period="4mo")
-            if hist.empty:
+        except Exception:
+            pass
+            
+        # 步驟 2：防呆判定！如果抓不到或資料太少(垃圾資料)，強制切換上櫃 (.TWO)
+        if hist.empty or len(hist) < 20:
+            try:
                 tkr = yf.Ticker(f"{code}.TWO")
                 hist = tkr.history(period="4mo")
-                
+            except Exception:
+                pass
+        # ==========================================
+        
+        try:
             if not hist.empty and len(hist) >= 20:
                 close = float(hist['Close'].iloc[-1])
                 ma20 = float(hist['Close'].rolling(window=20).mean().iloc[-1])
@@ -189,7 +205,7 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
                 })
             else:
                 stats["yf_fail"] += 1
-        except:
+        except Exception:
             stats["yf_fail"] += 1
             
         progress_bar.progress(20 + int(((i + 1) / total_csv_stocks) * 75))
