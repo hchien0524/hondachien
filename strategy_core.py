@@ -58,9 +58,18 @@ def load_and_clean_csv(file):
         df['代號'] = df['代號'].astype(str).str.replace('=', '').str.replace('"', '').str.strip()
         df = df[df['代號'].str.match(r'^[1-9]\d{3}$')]
         
-        trust_col = next((c for c in df.columns if '投信' in c and '買賣超' in c), None)
+        # 🛡️ V30.3 寬鬆尋標與偵察照明彈
+        trust_col = None
+        for c in df.columns:
+            # 只要欄位名稱有「投信」，且包含以下任一關鍵字就抓取
+            if '投信' in c and ('買賣超' in c or '買賣' in c or '差額' in c or '淨買' in c or '買超' in c):
+                trust_col = c
+                break
+                
         if not trust_col: 
             st.error(f"❌ 檔案 {file.name} 找不到「投信買賣超」相關欄位！")
+            # 💡 照明彈：把實際讀到的欄位印出來給總司令看！
+            st.warning(f"🕵️‍♂️ 系統實際讀取到的欄位有：{', '.join(df.columns)}")
             return None
         
         df_clean = pd.DataFrame()
