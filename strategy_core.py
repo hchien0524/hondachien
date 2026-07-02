@@ -27,23 +27,22 @@ def load_and_clean_csv(file):
         text = text.replace('\r\n', '\n').replace('\r', '\n')
         lines = text.split('\n')
         
+        # 🚀 V30.5 終極表頭鎖定：必須同時包含「代碼/代號」與「名稱」，完美避開官方標題陷阱！
         header_idx = -1
         for i, line in enumerate(lines):
             clean_line = line.replace('"', '').replace(' ', '')
-            if '代號' in clean_line or '代碼' in clean_line:
+            if ('代號' in clean_line or '代碼' in clean_line) and '名稱' in clean_line:
                 header_idx = i
                 break
                 
         if header_idx == -1:
-            st.error(f"❌ 檔案 {file.name} 找不到包含「代號」的表頭！")
+            st.error(f"❌ 檔案 {file.name} 找不到包含「代號」與「名稱」的真實表頭！")
             return None
             
-        # 🚀 V30.4 萬能分隔符號破解：同時支援逗號(,)與Tab(\t)
+        # 萬能分隔符號破解：同時支援逗號(,)與Tab(\t)
         df = pd.read_csv(io.StringIO(text), skiprows=header_idx, sep=r'[,\t]+', engine='python', on_bad_lines='skip')
         
-        # 💡 紀錄最原始的欄位名稱，作為終極除錯照明彈
         raw_cols = [str(c) for c in df.columns]
-        
         df.columns = [str(c).replace('"', '').replace(' ', '').replace('\n', '').strip() for c in df.columns]
         
         for col in df.columns:
@@ -59,7 +58,7 @@ def load_and_clean_csv(file):
             st.error(f"❌ 檔案 {file.name} 找不到「代號」欄位！")
             return None
             
-        # 🛡️ 排除 0 開頭 ETF 鐵門
+        # 🛡️ 排除 0 開頭 ETF 鐵門 (並處理官方 CSV 常見的 ="2330" 格式)
         df['代號'] = df['代號'].astype(str).str.replace('=', '').str.replace('"', '').str.strip()
         df = df[df['代號'].str.match(r'^[1-9]\d{3}$')]
         
