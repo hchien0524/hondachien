@@ -11,7 +11,6 @@ except ImportError:
 
 def load_and_clean_csv(file):
     try:
-        # 🌟 強制將檔案讀取游標歸零
         file.seek(0)  
         content = file.read()
         
@@ -27,7 +26,6 @@ def load_and_clean_csv(file):
         text = text.replace('\r\n', '\n').replace('\r', '\n')
         lines = text.split('\n')
         
-        # 🚀 V30.5 終極表頭鎖定：必須同時包含「代碼/代號」與「名稱」，完美避開官方標題陷阱！
         header_idx = -1
         for i, line in enumerate(lines):
             clean_line = line.replace('"', '').replace(' ', '')
@@ -39,10 +37,10 @@ def load_and_clean_csv(file):
             st.error(f"❌ 檔案 {file.name} 找不到包含「代號」與「名稱」的真實表頭！")
             return None
             
-        # 萬能分隔符號破解：同時支援逗號(,)與Tab(\t)
-        df = pd.read_csv(io.StringIO(text), skiprows=header_idx, sep=r'[,\t]+', engine='python', on_bad_lines='skip')
+        # 🚀 V30.6 智慧分隔符號：避免連續逗號導致的欄位位移
+        separator = '\t' if '\t' in lines[header_idx] else ','
+        df = pd.read_csv(io.StringIO(text), skiprows=header_idx, sep=separator, engine='python', on_bad_lines='skip')
         
-        raw_cols = [str(c) for c in df.columns]
         df.columns = [str(c).replace('"', '').replace(' ', '').replace('\n', '').strip() for c in df.columns]
         
         for col in df.columns:
@@ -58,11 +56,11 @@ def load_and_clean_csv(file):
             st.error(f"❌ 檔案 {file.name} 找不到「代號」欄位！")
             return None
             
-        # 🛡️ 排除 0 開頭 ETF 鐵門 (並處理官方 CSV 常見的 ="2330" 格式)
+        # 🚀 V30.6 終極代號清洗：處理 2330.0 的浮點數陷阱
         df['代號'] = df['代號'].astype(str).str.replace('=', '').str.replace('"', '').str.strip()
+        df['代號'] = df['代號'].str.split('.').str[0]  # 把 .0 切掉
         df = df[df['代號'].str.match(r'^[1-9]\d{3}$')]
         
-        # 🛡️ 寬鬆尋標邏輯
         trust_col = None
         for c in df.columns:
             if '投信' in c and ('買賣超' in c or '買賣' in c or '差額' in c or '淨買' in c or '買超' in c):
@@ -71,13 +69,21 @@ def load_and_clean_csv(file):
                 
         if not trust_col: 
             st.error(f"❌ 檔案 {file.name} 找不到「投信買賣超」相關欄位！")
-            st.warning(f"🕵️‍♂️ 系統實際讀取到的原始欄位有：{', '.join(raw_cols)}")
             return None
         
         df_clean = pd.DataFrame()
         df_clean['代號'] = df['代號']
         df_clean['名稱'] = df['名稱'] if '名稱' in df.columns else "未知"
-        df_clean['投信買賣超'] = pd.to_numeric(df[trust_col].astype(str).str.replace(',', '').str.strip(), errors='coerce').fillna(0) / 1000
+        
+        # 🚀 V30.6 強化數字轉換：處理可能出現的異常字元
+        raw_numbers = df[trust_col].astype(str).str.replace(',', '').str.replace('+', '').str.strip()
+        df_clean['投信買賣超'] = pd.to_numeric(raw_numbers, errors='coerce').fillna(0) / 1000
+        
+        # 💡 戰術級 X 光機：如果全部都是 0，印出原始資料給總司令看
+        if df_clean['投信買賣超'].sum() == 0 and len(df_clean) > 0:
+            st.warning(f"⚠️ 警告：{file.name} 解析成功，但投信買賣超數值全部為 0！")
+            st.write("🔍 原始數值預覽 (請確認這欄是不是真的數字)：", df[['代號', trust_col]].head())
+            
         return df_clean
     except Exception as e:
         st.error(f"❌ 解析檔案 {file.name} 時發生錯誤: {e}")
