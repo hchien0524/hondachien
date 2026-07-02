@@ -11,23 +11,36 @@ except ImportError:
 
 def load_and_clean_csv(file):
     try:
+        # 🌟 關鍵修復：強制將檔案讀取游標歸零！
+        file.seek(0)  
         content = file.read()
+        
+        if not content:
+            st.error(f"❌ 檔案 {file.name} 讀取為空，請嘗試重新上傳！")
+            return None
+            
         try:
             text = content.decode('cp950', errors='ignore')
         except Exception:
             text = content.decode('utf-8', errors='ignore')
+            
         text = text.replace('\r\n', '\n').replace('\r', '\n')
         lines = text.split('\n')
+        
         header_idx = -1
         for i, line in enumerate(lines):
             clean_line = line.replace('"', '').replace(' ', '')
             if '代號' in clean_line or '代碼' in clean_line:
                 header_idx = i
                 break
+                
         if header_idx == -1:
+            st.error(f"❌ 檔案 {file.name} 找不到包含「代號」的表頭！")
             return None
+            
         df = pd.read_csv(io.StringIO(text), skiprows=header_idx, engine='python', on_bad_lines='skip')
         df.columns = [str(c).replace('"', '').replace(' ', '').replace('\n', '').strip() for c in df.columns]
+        
         for col in df.columns:
             if '代號' in col or '代碼' in col:
                 df.rename(columns={col: '代號'}, inplace=True)
@@ -36,7 +49,9 @@ def load_and_clean_csv(file):
             if '名稱' in col:
                 df.rename(columns={col: '名稱'}, inplace=True)
                 break
+                
         if '代號' not in df.columns:
+            st.error(f"❌ 檔案 {file.name} 找不到「代號」欄位！")
             return None
             
         # 🛡️ 排除 0 開頭 ETF 鐵門
@@ -44,14 +59,17 @@ def load_and_clean_csv(file):
         df = df[df['代號'].str.match(r'^[1-9]\d{3}$')]
         
         trust_col = next((c for c in df.columns if '投信' in c and '買賣超' in c), None)
-        if not trust_col: return None
+        if not trust_col: 
+            st.error(f"❌ 檔案 {file.name} 找不到「投信買賣超」相關欄位！")
+            return None
         
         df_clean = pd.DataFrame()
         df_clean['代號'] = df['代號']
         df_clean['名稱'] = df['名稱'] if '名稱' in df.columns else "未知"
         df_clean['投信買賣超'] = pd.to_numeric(df[trust_col].astype(str).str.replace(',', '').str.strip(), errors='coerce').fillna(0) / 1000
         return df_clean
-    except Exception:
+    except Exception as e:
+        st.error(f"❌ 解析檔案 {file.name} 時發生錯誤: {e}")
         return None
 
 def add_to_portfolio(selected_codes, default_cost, final_df):
@@ -124,7 +142,7 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
         code = row['代號']
         
         # ==========================================
-        # 🚀 V30.1 雙軌抓價引擎 (完美修復版)
+        # 🚀 V30.2 雙軌抓價引擎 (完美修復版)
         # ==========================================
         hist = pd.DataFrame()
         
