@@ -11,7 +11,7 @@ except ImportError:
 
 def load_and_clean_csv(file):
     try:
-        # 🌟 關鍵修復：強制將檔案讀取游標歸零！
+        # 🌟 強制將檔案讀取游標歸零
         file.seek(0)  
         content = file.read()
         
@@ -38,7 +38,12 @@ def load_and_clean_csv(file):
             st.error(f"❌ 檔案 {file.name} 找不到包含「代號」的表頭！")
             return None
             
-        df = pd.read_csv(io.StringIO(text), skiprows=header_idx, engine='python', on_bad_lines='skip')
+        # 🚀 V30.4 萬能分隔符號破解：同時支援逗號(,)與Tab(\t)
+        df = pd.read_csv(io.StringIO(text), skiprows=header_idx, sep=r'[,\t]+', engine='python', on_bad_lines='skip')
+        
+        # 💡 紀錄最原始的欄位名稱，作為終極除錯照明彈
+        raw_cols = [str(c) for c in df.columns]
+        
         df.columns = [str(c).replace('"', '').replace(' ', '').replace('\n', '').strip() for c in df.columns]
         
         for col in df.columns:
@@ -58,18 +63,16 @@ def load_and_clean_csv(file):
         df['代號'] = df['代號'].astype(str).str.replace('=', '').str.replace('"', '').str.strip()
         df = df[df['代號'].str.match(r'^[1-9]\d{3}$')]
         
-        # 🛡️ V30.3 寬鬆尋標與偵察照明彈
+        # 🛡️ 寬鬆尋標邏輯
         trust_col = None
         for c in df.columns:
-            # 只要欄位名稱有「投信」，且包含以下任一關鍵字就抓取
             if '投信' in c and ('買賣超' in c or '買賣' in c or '差額' in c or '淨買' in c or '買超' in c):
                 trust_col = c
                 break
                 
         if not trust_col: 
             st.error(f"❌ 檔案 {file.name} 找不到「投信買賣超」相關欄位！")
-            # 💡 照明彈：把實際讀到的欄位印出來給總司令看！
-            st.warning(f"🕵️‍♂️ 系統實際讀取到的欄位有：{', '.join(df.columns)}")
+            st.warning(f"🕵️‍♂️ 系統實際讀取到的原始欄位有：{', '.join(raw_cols)}")
             return None
         
         df_clean = pd.DataFrame()
@@ -102,9 +105,6 @@ def add_to_portfolio(selected_codes, default_cost, final_df):
 def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
     st.markdown("### 🧠 V30 雙腦評分雷達 (戰情透視版)")
     
-    # ==========================================
-    # ⚠️ 接收抄底訊號，強制降均量
-    # ==========================================
     if st.session_state.get('golden_bottom', False):
         original_vol = filter_vol_min
         filter_vol_min = 1000
@@ -150,26 +150,20 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
     for i, (idx, row) in enumerate(top_candidates.iterrows()):
         code = row['代號']
         
-        # ==========================================
-        # 🚀 V30.2 雙軌抓價引擎 (完美修復版)
-        # ==========================================
         hist = pd.DataFrame()
         
-        # 步驟 1：獨立嘗試抓取上市 (.TW)
         try:
             tkr = yf.Ticker(f"{code}.TW")
             hist = tkr.history(period="4mo")
         except Exception:
             pass
             
-        # 步驟 2：防呆判定！如果抓不到或資料太少(垃圾資料)，強制切換上櫃 (.TWO)
         if hist.empty or len(hist) < 20:
             try:
                 tkr = yf.Ticker(f"{code}.TWO")
                 hist = tkr.history(period="4mo")
             except Exception:
                 pass
-        # ==========================================
         
         try:
             if not hist.empty and len(hist) >= 20:
@@ -202,7 +196,6 @@ def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
                     stats["reso_fail"] += 1
                     continue
                     
-                # V29 雙腦評分
                 left_score = min(row['連買天數'] * 15 + (5 - bias_20) * 3, 75)
                 right_score = 30 if bias_20 < 3 else (20 if bias_20 < 5 else 0)
                 if close > ma60: right_score += 10
