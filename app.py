@@ -12,10 +12,6 @@ try:
 except ImportError:
     st.error("⚠️ 系統警告：找不到 yahoo_sniper.py 或 broker_memory.py！請確認檔案是否在同一資料夾。")
 
-# 如果您有獨立的策略模組，請在這裡解除註解
-# import data_engine
-# import strategy_core
-
 # ==========================================
 # 🖥️ 戰情室 UI 初始化
 # ==========================================
@@ -116,24 +112,19 @@ with tab2:
             else:
                 st.warning(f"⚠️ 記憶庫中目前沒有 {query_stock} 的歷史資料。")
 
-# --- 分頁 3：雷達海選 (已修復 CSV 上傳) ---
+# --- 分頁 3：雷達海選 (內建極速濾波器) ---
 with tab3:
     st.subheader("📡 盤後雷達海選 (三大法人 CSV 掃描)")
     st.markdown("請上傳證交所/櫃買中心的「三大法人買賣超 CSV」檔案 (支援**多檔同時上傳**)。")
     
-    # 🌟 升級 1：開啟多檔案彈匣
     uploaded_files = st.file_uploader("📂 上傳三大法人買賣超 CSV 檔案", type=["csv"], accept_multiple_files=True)
     
     if uploaded_files:
         all_dfs = []
-        
         for uploaded_file in uploaded_files:
-            st.markdown(f"**處理檔案：{uploaded_file.name}**")
             try:
-                # 🌟 升級 2：終極編碼破解裝甲
                 df_radar = None
                 encodings = ['utf-8', 'cp950', 'big5', 'utf-8-sig']
-                
                 for enc in encodings:
                     try:
                         uploaded_file.seek(0)
@@ -142,25 +133,58 @@ with tab3:
                     except UnicodeDecodeError:
                         continue
                         
-                # 強制替換亂碼模式
                 if df_radar is None:
                     uploaded_file.seek(0)
                     df_radar = pd.read_csv(uploaded_file, encoding='cp950', thousands=',', errors='replace')
-                    st.warning(f"⚠️ {uploaded_file.name} 包含特殊字元，已啟動亂碼替換模式強制讀取。")
                     
-                st.success(f"✅ {uploaded_file.name} 載入成功！")
-                st.dataframe(df_radar.head(3), use_container_width=True)
                 all_dfs.append(df_radar)
-                
+                st.success(f"✅ {uploaded_file.name} 載入成功！")
             except Exception as e:
                 st.error(f"❌ {uploaded_file.name} 解析失敗。錯誤訊息: {e}")
         
-        if all_dfs and st.button("⚡ 啟動 V30.6 策略海選 (合併掃描)", type="primary"):
-            with st.spinner("正在將多份 CSV 合併並執行量化篩選..."):
-                # 💡 這裡預留呼叫您 strategy_core 的接口
-                # combined_df = pd.concat(all_dfs, ignore_index=True)
-                # df_result = strategy_core.run_scan(combined_df)
-                st.success("🎯 掃描完成！請將篩選出的潛力股代號，輸入到「🎯 主力 X 光狙擊」進行籌碼確認！")
+        if all_dfs and st.button("⚡ 啟動 V31 內建真龍海選", type="primary"):
+            with st.spinner("正在合併資料並無情斬殺 ETF 與權證..."):
+                try:
+                    # 1. 合併所有 CSV
+                    combined_df = pd.concat(all_dfs, ignore_index=True)
+                    
+                    # 2. 清洗欄位名稱 (去除空白)
+                    combined_df.columns = combined_df.columns.str.strip()
+                    
+                    # 3. 自動尋找關鍵欄位
+                    code_col = next((c for c in combined_df.columns if '代號' in c), None)
+                    name_col = next((c for c in combined_df.columns if '名稱' in c), None)
+                    net_buy_col = next((c for c in combined_df.columns if '三大法人買賣超' in c or '買賣超' in c), None)
+                    
+                    if code_col and name_col:
+                        # 將代號轉為字串並去除空白
+                        combined_df[code_col] = combined_df[code_col].astype(str).str.strip()
+                        
+                        # 🛡️ 核心濾波邏輯：剔除 0 開頭(ETF) 與 7 開頭(權證)
+                        mask = ~combined_df[code_col].str.startswith(('0', '7'))
+                        filtered_df = combined_df[mask].copy()
+                        
+                        # 如果有買賣超欄位，進行數值轉換與排序
+                        if net_buy_col:
+                            filtered_df[net_buy_col] = pd.to_numeric(filtered_df[net_buy_col].astype(str).str.replace(',', ''), errors='coerce')
+                            filtered_df = filtered_df.sort_values(by=net_buy_col, ascending=False)
+                        
+                        st.success("🎯 掃描完成！已成功剔除 ETF 與權證，以下為今日法人買超主力股 (前 50 名)：")
+                        
+                        # 重新整理欄位順序，讓代號、名稱、買賣超排在最前面
+                        cols = filtered_df.columns.tolist()
+                        important_cols = [code_col, name_col]
+                        if net_buy_col: important_cols.append(net_buy_col)
+                        other_cols = [c for c in cols if c not in important_cols]
+                        filtered_df = filtered_df[important_cols + other_cols]
+                        
+                        st.dataframe(filtered_df.head(50), use_container_width=True)
+                    else:
+                        st.warning("⚠️ 無法自動識別「代號」或「買賣超」欄位，顯示原始合併資料：")
+                        st.dataframe(combined_df, use_container_width=True)
+                        
+                except Exception as e:
+                    st.error(f"❌ 篩選過程發生錯誤：{e}")
 
 # --- 分頁 4：持股監控 ---
 with tab4:
