@@ -6,7 +6,7 @@ import random
 from datetime import datetime
 
 # ==========================================
-# 🛡️ 模組安全掛載區 (維持您原本的完美架構)
+# 🛡️ 模組安全掛載區
 # ==========================================
 try:
     import strategy_core
@@ -33,7 +33,6 @@ try:
 except ImportError:
     market_filter = None
 
-# --- 🌟 V31 新增模組安全掛載區 ---
 try:
     import yahoo_sniper
 except ImportError:
@@ -43,7 +42,6 @@ try:
     import broker_memory
 except ImportError:
     broker_memory = None
-# --------------------------------
 
 st.set_page_config(
     page_title="HIOS Wave Radar V31",
@@ -118,7 +116,7 @@ def main():
             st.warning("⚠️ 找不到 `backtest_engine.py`")
 
     # ==========================================
-    # 🎯 V31 雙模式狙擊槍 (持股中心連動版)
+    # 🎯 V31 雙模式狙擊槍 (嚴格核實版)
     # ==========================================
     with tab5:
         st.header("🎯 V31 主力 X 光狙擊機 (Yahoo 籌碼透視)")
@@ -153,15 +151,11 @@ def main():
         
         # --- 模式 2：持股中心連發狙擊 ---
         st.subheader("⚡ 模式二：持股主將全收錄 (機槍連發)")
-        st.markdown("系統會自動讀取您在「Tab 2」加入監控的股票，一鍵將所有主將的籌碼抓進記憶庫！")
         
-        # 🌟 直接讀取 portfolio (持股監控中心) 的名單
         if 'portfolio' in st.session_state and st.session_state['portfolio']:
             portfolio_list = st.session_state['portfolio']
-            
             st.success(f"📡 訊號連線成功！已從「持股監控中心」抓取到 {len(portfolio_list)} 檔主將名單。")
             
-            st.markdown("**🎯 即將執行自動狙擊的目標：**")
             cols = st.columns(5)
             for i, item in enumerate(portfolio_list):
                 stock_code = item.get('代號', '')
@@ -173,32 +167,48 @@ def main():
                 if yahoo_sniper and broker_memory:
                     progress_bar = st.progress(0)
                     status_text = st.empty()
-                    sniper = yahoo_sniper.YahooSniper()
                     broker_memory.init_db()
                     today_str = datetime.now().strftime("%Y-%m-%d")
                     
                     success_count = 0
+                    fail_list = []
+                    
                     for i, item in enumerate(portfolio_list):
                         code = str(item.get('代號', ''))
                         name = item.get('名稱', '')
                         status_text.text(f"🕵️‍♂️ 正在狙擊第 {i+1}/{len(portfolio_list)} 檔：{code} {name} ...")
                         
+                        # 🌟 嚴格核實防護：每次開槍都換一把新槍，防止 Yahoo 鎖定同一個 Session
+                        sniper = yahoo_sniper.YahooSniper()
                         df_result = sniper.scan_target(code)
                         
                         if df_result is not None and not df_result.empty:
-                            broker_memory.save_daily_data(today_str, code, df_result)
-                            success_count += 1
+                            # 嘗試寫入資料庫
+                            try:
+                                broker_memory.save_daily_data(today_str, code, df_result)
+                                success_count += 1
+                            except Exception as e:
+                                fail_list.append(f"{code} (資料庫寫入失敗)")
+                        else:
+                            fail_list.append(f"{code} (Yahoo 抓取失敗)")
                             
                         progress_bar.progress((i + 1) / len(portfolio_list))
-                        time.sleep(random.uniform(1.0, 3.0)) 
+                        time.sleep(random.uniform(1.5, 3.5)) # 稍微拉長偽裝時間
                         
                     status_text.empty()
-                    st.success(f"✅ 狙擊任務大獲全勝！成功將 {success_count} 檔主將的籌碼存入記憶庫。請至「Tab 6 歷史記憶」調閱！")
+                    
+                    # 🌟 戰情報告透明化
+                    if success_count == len(portfolio_list):
+                        st.success(f"✅ 狙擊任務大獲全勝！成功將 {success_count} 檔主將的籌碼存入記憶庫。")
+                    else:
+                        st.warning(f"⚠️ 狙擊任務結束。成功：{success_count} 檔，失敗：{len(fail_list)} 檔。")
+                        if fail_list:
+                            st.error(f"❌ 失敗名單：{', '.join(fail_list)}")
+                            st.info("💡 失敗原因可能是 Yahoo 阻擋，或是該股票今日無交易資料。")
                 else:
                     st.error("⚠️ 系統警告：找不到 `yahoo_sniper.py` 或 `broker_memory.py`！")
         else:
-            st.warning("⚠️ 目前「持股監控中心」沒有名單。")
-            st.info("💡 請先到「Tab 2 🚀 雷達掃描」，勾選您要的股票後，按下「➕ 加入監控中心」，名單就會自動傳送過來！")
+            st.warning("⚠️ 目前「持股監控中心」沒有名單。請先到 Tab 2 加入監控！")
 
     with tab6:
         st.header("🧠 歷史記憶庫 (多日籌碼加總)")
@@ -220,7 +230,7 @@ def main():
                         st.success(f"🎯 成功調閱 {query_stock} 歷史記憶！以下為區間前 15 大主力：")
                         st.dataframe(df_history, use_container_width=True)
                     else:
-                        st.warning(f"⚠️ 記憶庫中目前沒有 {query_stock} 的歷史資料。請先執行狙擊任務！")
+                        st.warning(f"⚠️ 記憶庫中目前沒有 {query_stock} 的歷史資料。請確認代號是否正確，或先執行狙擊任務！")
             else:
                 st.error("⚠️ 系統警告：找不到 `broker_memory.py`，無法調閱記憶庫！")
 
