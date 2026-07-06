@@ -97,7 +97,6 @@ def main():
             st.info(f"📂 已成功載入 {len(uploaded_csvs)} 份 CSV 檔案，準備啟動內部迴圈。")
             if strategy_core:
                 try:
-                    # 🌟 絕對純淨：只執行您原本的雷達核心
                     strategy_core.run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min)
                 except Exception as e:
                     st.error(f"雷達運算發生錯誤: {e}")
@@ -119,7 +118,7 @@ def main():
             st.warning("⚠️ 找不到 `backtest_engine.py`")
 
     # ==========================================
-    # 🎯 V31 雙模式狙擊槍 (視覺化升級版)
+    # 🎯 V31 雙模式狙擊槍 (全頻段訊號攔截版)
     # ==========================================
     with tab5:
         st.header("🎯 V31 主力 X 光狙擊機 (Yahoo 籌碼透視)")
@@ -155,23 +154,37 @@ def main():
         # --- 模式 2：雷達連發狙擊 ---
         st.subheader("⚡ 模式二：雷達榜單全收錄 (機槍連發)")
         
-        # 檢查雷達是否已經產生了名單
-        if 'radar_results' in st.session_state and st.session_state['radar_results']:
-            results = st.session_state['radar_results']
-            sorted_results = sorted(results, key=lambda x: x['🔥 總分'], reverse=True)
-            # 取前 10 名
+        # 🌟 全頻段訊號攔截器：掃描整個 session_state 尋找雷達名單
+        intercepted_results = None
+        for key, val in st.session_state.items():
+            # 檢查是否為 List 且裡面包含字典，且字典有 '代號'
+            if isinstance(val, list) and len(val) > 0 and isinstance(val[0], dict) and '代號' in val[0]:
+                intercepted_results = val
+                break
+            # 檢查是否為 DataFrame 且包含 '代號'
+            elif isinstance(val, pd.DataFrame) and '代號' in val.columns:
+                intercepted_results = val.to_dict('records')
+                break
+
+        if intercepted_results:
+            # 嘗試依照總分排序，如果沒有總分欄位就維持原排序
+            try:
+                sorted_results = sorted(intercepted_results, key=lambda x: x.get('🔥 總分', 0), reverse=True)
+            except:
+                sorted_results = intercepted_results
+                
             top_10 = sorted_results[:10]
-            top_10_codes = [r['代號'] for r in top_10]
+            top_10_codes = [str(r['代號']) for r in top_10]
             
-            st.success(f"📡 情報線連線成功！已接收到雷達傳來的 {len(results)} 檔真龍名單。")
+            st.success(f"📡 訊號攔截成功！已從系統底層抓取到 {len(intercepted_results)} 檔真龍名單。")
             
-            # 🌟 視覺化升級：把即將狙擊的目標列出來給總司令看！
-            st.markdown("**🎯 即將執行自動狙擊的目標 (總分前 10 名主將)：**")
+            st.markdown("**🎯 即將執行自動狙擊的目標 (前 10 名主將)：**")
             cols = st.columns(5)
             for i, r in enumerate(top_10):
-                cols[i % 5].info(f"**{r['代號']}**\n\n{r['名稱']}")
+                stock_name = r.get('名稱', '未知名稱')
+                cols[i % 5].info(f"**{r['代號']}**\n\n{stock_name}")
             
-            st.write("") # 排版留白
+            st.write("")
             if st.button(f"🔥 一鍵自動狙擊這 {len(top_10_codes)} 檔主將，並存入記憶庫", type="primary", use_container_width=True):
                 if yahoo_sniper and broker_memory:
                     progress_bar = st.progress(0)
@@ -182,7 +195,7 @@ def main():
                     
                     success_count = 0
                     for i, code in enumerate(top_10_codes):
-                        stock_name = next(r['名稱'] for r in top_10 if r['代號'] == code)
+                        stock_name = next((r.get('名稱', '') for r in top_10 if str(r['代號']) == code), '')
                         status_text.text(f"🕵️‍♂️ 正在狙擊第 {i+1}/{len(top_10_codes)} 檔：{code} {stock_name} ...")
                         
                         df_result = sniper.scan_target(code)
@@ -192,7 +205,6 @@ def main():
                             success_count += 1
                             
                         progress_bar.progress((i + 1) / len(top_10_codes))
-                        # 🛡️ 戰術偽裝：隨機暫停 1~3 秒，防止被 Yahoo 封鎖
                         time.sleep(random.uniform(1.0, 3.0)) 
                         
                     status_text.empty()
@@ -201,9 +213,14 @@ def main():
                     st.error("⚠️ 系統警告：找不到 `yahoo_sniper.py` 或 `broker_memory.py`！")
         else:
             st.warning("⚠️ 尚未接收到雷達名單。")
-            st.info("💡 如果您剛才已經在 Tab 2 掃描完成，請點擊下方按鈕強制同步資料：")
+            st.info("💡 請先到「Tab 2 🚀 雷達掃描」執行掃描。如果已經掃描過，請點擊下方按鈕強制同步：")
             if st.button("🔄 強制同步雷達資料", use_container_width=True):
                 st.rerun()
+            
+            # 🛠️ 軍師除錯面板：讓總司令看清底層真相
+            with st.expander("🛠️ 系統底層記憶體狀態 (軍師除錯用)"):
+                st.write("目前記憶體中所有的變數名稱：")
+                st.write(list(st.session_state.keys()))
 
     with tab6:
         st.header("🧠 歷史記憶庫 (多日籌碼加總)")
