@@ -3,6 +3,7 @@ import pandas as pd
 import json
 import time
 import random
+import os
 from datetime import datetime
 
 # ==========================================
@@ -50,9 +51,42 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# ==========================================
+# 💾 本機硬碟記憶晶片 (永久保存持股與觀察名單)
+# ==========================================
+DATA_FILE = "hios_data.json"
+
+def load_local_data():
+    if not os.path.exists(DATA_FILE):
+        with open(DATA_FILE, 'w', encoding='utf-8') as f:
+            json.dump({"portfolio": [], "watchlist": []}, f, ensure_ascii=False, indent=4)
+    with open(DATA_FILE, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+def save_local_data(data):
+    with open(DATA_FILE, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
 def main():
+    # 🌟 啟動時自動同步硬碟資料與網頁暫存
+    local_data = load_local_data()
+    
+    # 同步持股中心
+    if 'portfolio' not in st.session_state:
+        st.session_state['portfolio'] = local_data.get('portfolio', [])
+    elif st.session_state['portfolio'] != local_data.get('portfolio', []):
+        local_data['portfolio'] = st.session_state['portfolio']
+        save_local_data(local_data)
+        
+    # 同步觀察名單
+    if 'watchlist' not in st.session_state:
+        st.session_state['watchlist'] = local_data.get('watchlist', [])
+    elif st.session_state['watchlist'] != local_data.get('watchlist', []):
+        local_data['watchlist'] = st.session_state['watchlist']
+        save_local_data(local_data)
+
     st.sidebar.title("🎯 HIOS Wave Radar")
-    st.sidebar.caption("V31 旗艦視覺版")
+    st.sidebar.caption("V31 旗艦視覺版 (全自動記憶)")
     
     st.sidebar.header("📂 1. 數據引擎")
     uploaded_csvs = st.sidebar.file_uploader(
@@ -116,7 +150,7 @@ def main():
             st.warning("⚠️ 找不到 `backtest_engine.py`")
 
     # ==========================================
-    # 🎯 V31 雙模式狙擊槍 (持股與觀察名單分離版)
+    # 🎯 V31 雙模式狙擊槍 (全自動硬碟讀取版)
     # ==========================================
     with tab5:
         st.header("🎯 V31 主力 X 光狙擊機 (Yahoo 籌碼透視)")
@@ -148,50 +182,68 @@ def main():
 
         st.markdown("---")
         
+        # 🌟 觀察名單管理區 (一鍵匯入與永久記憶)
+        st.subheader("👀 觀察名單管理 (本機永久記憶)")
+        
+        current_watchlist = st.session_state.get('watchlist', [])
+        if current_watchlist:
+            st.write(f"**目前硬碟記憶中的觀察名單：** {', '.join([f'{w.get('代號','')} {w.get('名稱','')}' for w in current_watchlist])}")
+            if st.button("🗑️ 清空觀察名單"):
+                st.session_state['watchlist'] = []
+                save_local_data({"portfolio": st.session_state.get('portfolio', []), "watchlist": []})
+                st.rerun()
+        else:
+            st.write("目前觀察名單為空。")
+
+        if 'radar_results' in st.session_state and st.session_state['radar_results']:
+            if st.button("⚡ 一鍵將今日雷達前 10 名寫入觀察名單", type="secondary"):
+                top_10 = sorted(st.session_state['radar_results'], key=lambda x: x['🔥 總分'], reverse=True)[:10]
+                existing_codes = [w.get('代號', '') for w in st.session_state.get('watchlist', [])]
+                added = 0
+                for r in top_10:
+                    if r['代號'] not in existing_codes:
+                        st.session_state['watchlist'].append({"代號": r['代號'], "名稱": r['名稱']})
+                        added += 1
+                if added > 0:
+                    save_local_data({"portfolio": st.session_state.get('portfolio', []), "watchlist": st.session_state['watchlist']})
+                    st.success(f"✅ 成功將 {added} 檔新主將寫入本機硬碟！")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.info("雷達前 10 名皆已在觀察名單中。")
+
+        st.markdown("---")
+        
+        # 🌟 自動狙擊區 (自動讀取硬碟)
         st.subheader("⚡ 模式二：多目標機槍連發 (持股 + 觀察名單)")
         
-        # 🌟 建立代號與名稱的對照表，方便後續顯示
-        code_to_name = {}
-        portfolio_codes = []
-        watchlist_codes = []
+        target_list = []
+        seen_codes = set()
         
-        # 1. 讀取真實持股 (Portfolio)
-        portfolio_list = st.session_state.get('portfolio', [])
-        if portfolio_list:
-            st.info(f"🛡️ **真實持股區**：已自動載入 {len(portfolio_list)} 檔持股。")
-            for item in portfolio_list:
-                code = str(item.get('代號', ''))
-                code_to_name[code] = item.get('名稱', '')
-                portfolio_codes.append(code)
-        
-        # 2. 讀取雷達結果，建立「觀察名單 (Watchlist)」選擇器
-        if 'radar_results' in st.session_state and st.session_state['radar_results']:
-            radar_df = pd.DataFrame(st.session_state['radar_results'])
-            # 建立選項格式 "代號 - 名稱"
-            radar_options = radar_df.apply(lambda x: f"{x['代號']} - {x['名稱']}", axis=1).tolist()
-            
-            st.markdown("👀 **雷達自選觀察區 (不會混入持股)**：")
-            selected_watch = st.multiselect(
-                "請從今日雷達名單中，挑選您想「追蹤籌碼」的標的：", 
-                radar_options, 
-                key="watchlist_select"
-            )
-            
-            # 存入 session_state 供 Tab 6 使用
-            st.session_state['watchlist'] = selected_watch
-            
-            for sw in selected_watch:
-                code = sw.split(" - ")[0]
-                name = sw.split(" - ")[1]
-                code_to_name[code] = name
-                watchlist_codes.append(code)
+        # 合併持股與觀察名單，並去除重複代號
+        for item in st.session_state.get('portfolio', []):
+            code = str(item.get('代號', ''))
+            if code and code not in seen_codes:
+                target_list.append(item)
+                seen_codes.add(code)
                 
-        # 3. 合併所有要狙擊的目標 (去重複)
-        target_codes = list(set(portfolio_codes + watchlist_codes))
-        
-        if target_codes:
+        for item in st.session_state.get('watchlist', []):
+            code = str(item.get('代號', ''))
+            if code and code not in seen_codes:
+                target_list.append(item)
+                seen_codes.add(code)
+                
+        if target_list:
+            st.info(f"🛡️ 系統已從本機硬碟自動載入 {len(target_list)} 檔標的 (含持股與觀察名單)。")
+            
+            cols = st.columns(5)
+            for i, item in enumerate(target_list):
+                stock_code = item.get('代號', '')
+                stock_name = item.get('名稱', '')
+                cols[i % 5].info(f"**{stock_code}**\n\n{stock_name}")
+            
             st.write("")
-            if st.button(f"🔥 一鍵自動狙擊這 {len(target_codes)} 檔標的，並存入記憶庫", type="primary", use_container_width=True):
+            if st.button(f"🔥 一鍵自動狙擊這 {len(target_list)} 檔標的，並存入記憶庫", type="primary", use_container_width=True):
                 if yahoo_sniper and broker_memory:
                     progress_bar = st.progress(0)
                     status_text = st.empty()
@@ -201,9 +253,10 @@ def main():
                     success_count = 0
                     fail_list = []
                     
-                    for i, code in enumerate(target_codes):
-                        name = code_to_name.get(code, '')
-                        status_text.text(f"🕵️‍♂️ 正在狙擊第 {i+1}/{len(target_codes)} 檔：{code} {name} ...")
+                    for i, item in enumerate(target_list):
+                        code = str(item.get('代號', ''))
+                        name = item.get('名稱', '')
+                        status_text.text(f"🕵️‍♂️ 正在狙擊第 {i+1}/{len(target_list)} 檔：{code} {name} ...")
                         
                         sniper = yahoo_sniper.YahooSniper()
                         df_result = sniper.scan_target(code)
@@ -217,12 +270,12 @@ def main():
                         else:
                             fail_list.append(f"{code} (Yahoo 抓取失敗)")
                             
-                        progress_bar.progress((i + 1) / len(target_codes))
+                        progress_bar.progress((i + 1) / len(target_list))
                         time.sleep(random.uniform(1.5, 3.5)) 
                         
                     status_text.empty()
                     
-                    if success_count == len(target_codes):
+                    if success_count == len(target_list):
                         st.success(f"✅ 狙擊任務大獲全勝！成功將 {success_count} 檔標的籌碼存入記憶庫。")
                     else:
                         st.warning(f"⚠️ 狙擊任務結束。成功：{success_count} 檔，失敗：{len(fail_list)} 檔。")
@@ -231,7 +284,7 @@ def main():
                 else:
                     st.error("⚠️ 系統警告：找不到 `yahoo_sniper.py` 或 `broker_memory.py`！")
         else:
-            st.warning("⚠️ 目前沒有鎖定任何目標。請先加入持股，或從上方雷達名單中挑選觀察標的！")
+            st.warning("⚠️ 目前硬碟中沒有任何持股或觀察名單。請先加入持股，或點擊上方按鈕匯入雷達名單！")
 
     # ==========================================
     # 🧠 V31 歷史記憶庫 (雙軌合併下拉選單)
@@ -242,10 +295,12 @@ def main():
         
         col_m1, col_m2 = st.columns([1, 3])
         with col_m1:
-            # 🌟 雙軌合併：將持股與觀察名單合併為下拉選單
-            portfolio_list = st.session_state.get('portfolio', [])
-            p_options = [f"{item.get('代號', '')} - {item.get('名稱', '')}" for item in portfolio_list]
-            w_options = st.session_state.get('watchlist', [])
+            # 🌟 雙軌合併：將硬碟中的持股與觀察名單合併為下拉選單
+            p_list = st.session_state.get('portfolio', [])
+            w_list = st.session_state.get('watchlist', [])
+            
+            p_options = [f"{item.get('代號', '')} - {item.get('名稱', '')}" for item in p_list if item.get('代號')]
+            w_options = [f"{item.get('代號', '')} - {item.get('名稱', '')}" for item in w_list if item.get('代號')]
             
             all_options = list(set(p_options + w_options))
             all_options.sort() # 依代號排序
@@ -255,7 +310,7 @@ def main():
                 query_stock = selected_option.split(" - ")[0]
             else:
                 query_stock = st.text_input("查詢股票代號:", value="5443", key="query_stock_input")
-                st.caption("💡 提示：在 Tab 5 挑選觀察名單後，這裡會自動變成下拉選單！")
+                st.caption("💡 提示：加入持股或觀察名單後，這裡會自動變成下拉選單！")
                 
             query_days = st.slider("查詢天數:", min_value=1, max_value=20, value=5)
             query_btn = st.button("🔍 調閱歷史記憶", type="primary", use_container_width=True)
