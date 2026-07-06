@@ -106,13 +106,19 @@ def main():
     st.sidebar.header("💾 0. 記憶存檔與還原")
     st.sidebar.markdown("雲端防護機制：每日請手動備份與還原")
     
-    # 讀檔還原區
+    # 讀檔還原區 (🌟 已修復失憶 Bug)
     uploaded_backup = st.sidebar.file_uploader("📥 1. 上班讀檔：上傳 HIOS_Backup.zip", type=['zip'])
     if uploaded_backup is not None:
         if st.sidebar.button("🔄 執行記憶還原", type="primary", use_container_width=True):
             try:
                 with zipfile.ZipFile(uploaded_backup, 'r') as zf:
                     zf.extractall() # 解壓縮並覆蓋現有檔案
+                
+                # 🌟 關鍵修復：強制將解壓縮後的新資料，灌入 Streamlit 的腦袋中
+                restored_data = load_local_data()
+                st.session_state['portfolio'] = restored_data.get('portfolio', [])
+                st.session_state['watchlist'] = restored_data.get('watchlist', [])
+                
                 st.sidebar.success("✅ 記憶還原成功！系統已滿血復活。")
                 time.sleep(1)
                 st.rerun()
