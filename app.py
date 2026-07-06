@@ -118,7 +118,7 @@ def main():
             st.warning("⚠️ 找不到 `backtest_engine.py`")
 
     # ==========================================
-    # 🎯 V31 雙模式狙擊槍 (全頻段訊號攔截版)
+    # 🎯 V31 雙模式狙擊槍 (持股中心連動版)
     # ==========================================
     with tab5:
         st.header("🎯 V31 主力 X 光狙擊機 (Yahoo 籌碼透視)")
@@ -151,41 +151,25 @@ def main():
 
         st.markdown("---")
         
-        # --- 模式 2：雷達連發狙擊 ---
-        st.subheader("⚡ 模式二：雷達榜單全收錄 (機槍連發)")
+        # --- 模式 2：持股中心連發狙擊 ---
+        st.subheader("⚡ 模式二：持股主將全收錄 (機槍連發)")
+        st.markdown("系統會自動讀取您在「Tab 2」加入監控的股票，一鍵將所有主將的籌碼抓進記憶庫！")
         
-        # 🌟 全頻段訊號攔截器：掃描整個 session_state 尋找雷達名單
-        intercepted_results = None
-        for key, val in st.session_state.items():
-            # 檢查是否為 List 且裡面包含字典，且字典有 '代號'
-            if isinstance(val, list) and len(val) > 0 and isinstance(val[0], dict) and '代號' in val[0]:
-                intercepted_results = val
-                break
-            # 檢查是否為 DataFrame 且包含 '代號'
-            elif isinstance(val, pd.DataFrame) and '代號' in val.columns:
-                intercepted_results = val.to_dict('records')
-                break
-
-        if intercepted_results:
-            # 嘗試依照總分排序，如果沒有總分欄位就維持原排序
-            try:
-                sorted_results = sorted(intercepted_results, key=lambda x: x.get('🔥 總分', 0), reverse=True)
-            except:
-                sorted_results = intercepted_results
-                
-            top_10 = sorted_results[:10]
-            top_10_codes = [str(r['代號']) for r in top_10]
+        # 🌟 直接讀取 portfolio (持股監控中心) 的名單
+        if 'portfolio' in st.session_state and st.session_state['portfolio']:
+            portfolio_list = st.session_state['portfolio']
             
-            st.success(f"📡 訊號攔截成功！已從系統底層抓取到 {len(intercepted_results)} 檔真龍名單。")
+            st.success(f"📡 訊號連線成功！已從「持股監控中心」抓取到 {len(portfolio_list)} 檔主將名單。")
             
-            st.markdown("**🎯 即將執行自動狙擊的目標 (前 10 名主將)：**")
+            st.markdown("**🎯 即將執行自動狙擊的目標：**")
             cols = st.columns(5)
-            for i, r in enumerate(top_10):
-                stock_name = r.get('名稱', '未知名稱')
-                cols[i % 5].info(f"**{r['代號']}**\n\n{stock_name}")
+            for i, item in enumerate(portfolio_list):
+                stock_code = item.get('代號', '')
+                stock_name = item.get('名稱', '')
+                cols[i % 5].info(f"**{stock_code}**\n\n{stock_name}")
             
             st.write("")
-            if st.button(f"🔥 一鍵自動狙擊這 {len(top_10_codes)} 檔主將，並存入記憶庫", type="primary", use_container_width=True):
+            if st.button(f"🔥 一鍵自動狙擊這 {len(portfolio_list)} 檔主將，並存入記憶庫", type="primary", use_container_width=True):
                 if yahoo_sniper and broker_memory:
                     progress_bar = st.progress(0)
                     status_text = st.empty()
@@ -194,9 +178,10 @@ def main():
                     today_str = datetime.now().strftime("%Y-%m-%d")
                     
                     success_count = 0
-                    for i, code in enumerate(top_10_codes):
-                        stock_name = next((r.get('名稱', '') for r in top_10 if str(r['代號']) == code), '')
-                        status_text.text(f"🕵️‍♂️ 正在狙擊第 {i+1}/{len(top_10_codes)} 檔：{code} {stock_name} ...")
+                    for i, item in enumerate(portfolio_list):
+                        code = str(item.get('代號', ''))
+                        name = item.get('名稱', '')
+                        status_text.text(f"🕵️‍♂️ 正在狙擊第 {i+1}/{len(portfolio_list)} 檔：{code} {name} ...")
                         
                         df_result = sniper.scan_target(code)
                         
@@ -204,23 +189,16 @@ def main():
                             broker_memory.save_daily_data(today_str, code, df_result)
                             success_count += 1
                             
-                        progress_bar.progress((i + 1) / len(top_10_codes))
+                        progress_bar.progress((i + 1) / len(portfolio_list))
                         time.sleep(random.uniform(1.0, 3.0)) 
                         
                     status_text.empty()
-                    st.success(f"✅ 狙擊任務大獲全勝！成功將 {success_count} 檔真龍的籌碼存入記憶庫。請至「Tab 6 歷史記憶」調閱！")
+                    st.success(f"✅ 狙擊任務大獲全勝！成功將 {success_count} 檔主將的籌碼存入記憶庫。請至「Tab 6 歷史記憶」調閱！")
                 else:
                     st.error("⚠️ 系統警告：找不到 `yahoo_sniper.py` 或 `broker_memory.py`！")
         else:
-            st.warning("⚠️ 尚未接收到雷達名單。")
-            st.info("💡 請先到「Tab 2 🚀 雷達掃描」執行掃描。如果已經掃描過，請點擊下方按鈕強制同步：")
-            if st.button("🔄 強制同步雷達資料", use_container_width=True):
-                st.rerun()
-            
-            # 🛠️ 軍師除錯面板：讓總司令看清底層真相
-            with st.expander("🛠️ 系統底層記憶體狀態 (軍師除錯用)"):
-                st.write("目前記憶體中所有的變數名稱：")
-                st.write(list(st.session_state.keys()))
+            st.warning("⚠️ 目前「持股監控中心」沒有名單。")
+            st.info("💡 請先到「Tab 2 🚀 雷達掃描」，勾選您要的股票後，按下「➕ 加入監控中心」，名單就會自動傳送過來！")
 
     with tab6:
         st.header("🧠 歷史記憶庫 (多日籌碼加總)")
