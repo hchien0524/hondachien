@@ -10,7 +10,7 @@ try:
     import yahoo_sniper
     import broker_memory
 except ImportError:
-    st.error("⚠️ 系統警告：找不到 yahoo_sniper.py 或 broker_memory.py！")
+    st.error("⚠️ 系統警告：找不到 yahoo_sniper.py 或 broker_memory.py！請確認檔案是否在同一資料夾。")
 
 # 如果您有獨立的策略模組，請在這裡解除註解
 # import data_engine
@@ -119,38 +119,54 @@ with tab2:
 # --- 分頁 3：雷達海選 (已修復 CSV 上傳) ---
 with tab3:
     st.subheader("📡 盤後雷達海選 (三大法人 CSV 掃描)")
-    st.markdown("請上傳證交所下載的「三大法人買賣超 CSV」檔案，系統將自動過濾 ETF 並篩選出真龍潛力股。")
+    st.markdown("請上傳證交所/櫃買中心的「三大法人買賣超 CSV」檔案 (支援**多檔同時上傳**)。")
     
-    uploaded_file = st.file_uploader("📂 上傳三大法人買賣超 CSV 檔案", type=["csv"])
+    # 🌟 升級 1：開啟多檔案彈匣
+    uploaded_files = st.file_uploader("📂 上傳三大法人買賣超 CSV 檔案", type=["csv"], accept_multiple_files=True)
     
-    if uploaded_file is not None:
-        try:
-            # 🛡️ V30.6 核心防呆：自動處理台股 CSV 常見的 Big5 編碼與千分位逗號
+    if uploaded_files:
+        all_dfs = []
+        
+        for uploaded_file in uploaded_files:
+            st.markdown(f"**處理檔案：{uploaded_file.name}**")
             try:
-                df_radar = pd.read_csv(uploaded_file, encoding='utf-8', thousands=',')
-            except UnicodeDecodeError:
-                uploaded_file.seek(0)
-                df_radar = pd.read_csv(uploaded_file, encoding='big5', thousands=',')
+                # 🌟 升級 2：終極編碼破解裝甲
+                df_radar = None
+                encodings = ['utf-8', 'cp950', 'big5', 'utf-8-sig']
                 
-            st.success("✅ CSV 檔案載入成功！資料預覽：")
-            st.dataframe(df_radar.head(5), use_container_width=True)
-            
-            if st.button("⚡ 啟動 V30.6 策略海選", type="primary"):
-                with st.spinner("正在執行量化篩選 (剔除 ETF、計算均線、比對投信籌碼)..."):
-                    # 💡 這裡預留呼叫您 strategy_core 的接口
-                    # df_result = strategy_core.run_scan(df_radar)
+                for enc in encodings:
+                    try:
+                        uploaded_file.seek(0)
+                        df_radar = pd.read_csv(uploaded_file, encoding=enc, thousands=',')
+                        break
+                    except UnicodeDecodeError:
+                        continue
+                        
+                # 強制替換亂碼模式
+                if df_radar is None:
+                    uploaded_file.seek(0)
+                    df_radar = pd.read_csv(uploaded_file, encoding='cp950', thousands=',', errors='replace')
+                    st.warning(f"⚠️ {uploaded_file.name} 包含特殊字元，已啟動亂碼替換模式強制讀取。")
                     
-                    st.success("🎯 掃描完成！請將篩選出的潛力股代號，輸入到「🎯 主力 X 光狙擊」進行籌碼確認！")
-                    
-        except Exception as e:
-            st.error(f"❌ 檔案解析失敗，請確認是否為標準的證交所 CSV 格式。錯誤訊息: {e}")
+                st.success(f"✅ {uploaded_file.name} 載入成功！")
+                st.dataframe(df_radar.head(3), use_container_width=True)
+                all_dfs.append(df_radar)
+                
+            except Exception as e:
+                st.error(f"❌ {uploaded_file.name} 解析失敗。錯誤訊息: {e}")
+        
+        if all_dfs and st.button("⚡ 啟動 V30.6 策略海選 (合併掃描)", type="primary"):
+            with st.spinner("正在將多份 CSV 合併並執行量化篩選..."):
+                # 💡 這裡預留呼叫您 strategy_core 的接口
+                # combined_df = pd.concat(all_dfs, ignore_index=True)
+                # df_result = strategy_core.run_scan(combined_df)
+                st.success("🎯 掃描完成！請將篩選出的潛力股代號，輸入到「🎯 主力 X 光狙擊」進行籌碼確認！")
 
 # --- 分頁 4：持股監控 ---
 with tab4:
     st.subheader("🛡️ 持股監控中心")
     st.markdown("目前戰情室監控主將：**英業達 (2356)**、**均豪 (5443)**")
     
-    # 建立一個簡單的持股監控表
     portfolio_data = {
         "股票名稱": ["英業達 (2356)", "均豪 (5443)"],
         "持有張數": [6, 2],
