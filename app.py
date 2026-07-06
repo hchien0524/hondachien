@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import yfinance as yf
+import io # 🌟 新增：用來處理純文字資料流的模組
 
 # ==========================================
 # 🛡️ 系統模組載入區
@@ -112,7 +113,7 @@ with tab2:
             else:
                 st.warning(f"⚠️ 記憶庫中目前沒有 {query_stock} 的歷史資料。")
 
-# --- 分頁 3：雷達海選 (修復正則表示式版) ---
+# --- 分頁 3：雷達海選 (底層純文字掃描版) ---
 with tab3:
     st.subheader("📡 盤後雷達海選 (三大法人 CSV 掃描)")
     st.markdown("請上傳證交所/櫃買中心的「三大法人買賣超 CSV」檔案 (支援**多檔同時上傳**)。")
@@ -123,34 +124,48 @@ with tab3:
         all_dfs = []
         for uploaded_file in uploaded_files:
             try:
-                df_radar = None
-                encodings = ['utf-8', 'cp950', 'big5', 'utf-8-sig']
+                # 🌟 降維打擊：直接讀取檔案的原始位元組
+                raw_bytes = uploaded_file.read()
+                text = None
                 
-                for enc in encodings:
+                # 嘗試各種編碼解開文字
+                for enc in ['utf-8', 'cp950', 'big5', 'utf-8-sig']:
                     try:
-                        uploaded_file.seek(0)
-                        temp_df = pd.read_csv(uploaded_file, encoding=enc, header=None, dtype=str, on_bad_lines='skip')
-                        
-                        header_idx = -1
-                        for i in range(min(10, len(temp_df))):
-                            row_vals = temp_df.iloc[i].fillna('').astype(str).tolist()
-                            if any('代號' in val or '代碼' in val for val in row_vals):
-                                header_idx = i
-                                break
-                                
-                        if header_idx != -1:
-                            temp_df.columns = temp_df.iloc[header_idx].astype(str)
-                            df_radar = temp_df.iloc[header_idx + 1:].copy()
-                            break 
-                    except Exception:
+                        text = raw_bytes.decode(enc)
+                        break
+                    except UnicodeDecodeError:
                         continue
+                        
+                if text is None:
+                    text = raw_bytes.decode('cp950', errors='replace')
                 
-                if df_radar is not None:
-                    all_dfs.append(df_radar)
-                    st.success(f"✅ {uploaded_file.name} 載入成功！")
-                else:
-                    st.error(f"❌ {uploaded_file.name} 解析失敗：找不到包含「代號」的欄位。")
-                    
+                # 將文字切成一行一行
+                lines = text.splitlines()
+                
+                # 🌟 尋找真正的表頭行
+                header_idx = -1
+                delimiter = ','
+                for i, line in enumerate(lines[:20]): # 只掃描前 20 行
+                    if '代號' in line or '代碼' in line:
+                        header_idx = i
+                        # 自動偵測是逗號分隔還是 Tab 分隔
+                        if '\t' in line:
+                            delimiter = '\t'
+                        break
+                
+                if header_idx == -1:
+                    st.error(f"❌ {uploaded_file.name} 解析失敗：前 20 行找不到「代號」欄位。")
+                    continue
+                
+                # 🌟 只保留表頭和底下的資料，把上面的垃圾標題全部切掉！
+                valid_lines = lines[header_idx:]
+                csv_io = io.StringIO('\n'.join(valid_lines))
+                
+                # 現在餵給 Pandas 的，是絕對乾淨、格式一致的資料！
+                df_radar = pd.read_csv(csv_io, sep=delimiter, dtype=str, on_bad_lines='skip')
+                all_dfs.append(df_radar)
+                st.success(f"✅ {uploaded_file.name} 載入成功！(已精準切除垃圾標題)")
+                
             except Exception as e:
                 st.error(f"❌ {uploaded_file.name} 發生未知的讀取錯誤: {e}")
         
@@ -159,7 +174,7 @@ with tab3:
                 try:
                     combined_df = pd.concat(all_dfs, ignore_index=True)
                     
-                    # 🌟 修復後的暴力清洗：\s 已經包含所有空白與換行，加上去除引號
+                    # 暴力清洗欄位名稱
                     combined_df.columns = combined_df.columns.astype(str).str.replace(r'[\s"\']', '', regex=True)
                     
                     # 自動尋找關鍵欄位
@@ -194,10 +209,8 @@ with tab3:
                         
                         st.dataframe(filtered_df.head(50), use_container_width=True)
                     else:
-                        # 🌟 雷達除錯模式：印出真實欄位名稱
                         st.warning(f"⚠️ 找不到關鍵欄位！系統目前讀到的真實欄位名稱是：")
                         st.code(combined_df.columns.tolist())
-                        st.info("💡 請總司令將上方灰底框框內的「欄位名稱」複製貼給我，我立刻為您精準校正雷達！")
                         st.dataframe(combined_df, use_container_width=True)
                         
                 except Exception as e:
