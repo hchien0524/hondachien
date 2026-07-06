@@ -3,6 +3,46 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 
+# ==========================================
+# ⚡ 效能防護罩：獨立的快取資料獲取函數
+# ==========================================
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_stock_data(code):
+    """去 Yahoo 抓取報價並計算均線，結果快取 5 分鐘 (300秒)"""
+    try:
+        tkr = yf.Ticker(f"{code}.TW")
+        hist = tkr.history(period="4mo")
+        if hist.empty:
+            tkr = yf.Ticker(f"{code}.TWO")
+            hist = tkr.history(period="4mo")
+            
+        if not hist.empty and len(hist) >= 20:
+            close = float(hist['Close'].iloc[-1])
+            ma5 = float(hist['Close'].rolling(window=5).mean().iloc[-1])
+            ma10 = float(hist['Close'].rolling(window=10).mean().iloc[-1])
+            ma20 = float(hist['Close'].rolling(window=20).mean().iloc[-1])
+            
+            # 處理新上市股票沒有 MA60 的問題
+            if len(hist) >= 60:
+                ma60 = float(hist['Close'].rolling(window=60).mean().iloc[-1])
+            else:
+                ma60 = ma20 # 若無季線，以月線作為終極防線
+                
+            return {
+                "success": True,
+                "close": close,
+                "ma10": ma10,
+                "ma20": ma20,
+                "ma60": ma60
+            }
+        else:
+            return {"success": False, "error": "⚪ 無足夠報價資料 (請確認代號)"}
+    except Exception as e:
+        return {"success": False, "error": "⚪ 連線失敗"}
+
+# ==========================================
+# 🛡️ 主畫面渲染函數
+# ==========================================
 def render_portfolio_monitor():
     st.header("🛡️ 總司令戰情儀表板 (V30 動態停利版)")
     st.caption("導入法人級【三階段動態停利】與【季線防守血條】，抱得住大波段，躲得過大洗盤！")
@@ -33,27 +73,15 @@ def render_portfolio_monitor():
                 
                 if not code:
                     st.write("⚪ 無效的股票代號")
-                    continue
+                else:
+                    # ⚡ 呼叫快取函數，瞬間取得資料 (5分鐘內不會重複連線 Yahoo)
+                    data = fetch_stock_data(code)
                     
-                try:
-                    # 抓 4 個月才有足夠的 K 棒算 MA60 (季線)
-                    tkr = yf.Ticker(f"{code}.TW")
-                    hist = tkr.history(period="4mo")
-                    if hist.empty:
-                        tkr = yf.Ticker(f"{code}.TWO")
-                        hist = tkr.history(period="4mo")
-                        
-                    if not hist.empty and len(hist) >= 20:
-                        close = float(hist['Close'].iloc[-1])
-                        ma5 = float(hist['Close'].rolling(window=5).mean().iloc[-1])
-                        ma10 = float(hist['Close'].rolling(window=10).mean().iloc[-1])
-                        ma20 = float(hist['Close'].rolling(window=20).mean().iloc[-1])
-                        
-                        # 處理新上市股票沒有 MA60 的問題
-                        if len(hist) >= 60:
-                            ma60 = float(hist['Close'].rolling(window=60).mean().iloc[-1])
-                        else:
-                            ma60 = ma20 # 若無季線，以月線作為終極防線
+                    if data["success"]:
+                        close = data["close"]
+                        ma10 = data["ma10"]
+                        ma20 = data["ma20"]
+                        ma60 = data["ma60"]
                         
                         # 計算真實報酬率與乖離
                         ret_pct = ((close - cost) / cost) * 100 if cost > 0 else 0
@@ -96,12 +124,9 @@ def render_portfolio_monitor():
                             </div>
                             """, unsafe_allow_html=True
                         )
-                        
                     else:
-                        st.write("⚪ 無足夠報價資料 (請確認代號)")
-                except Exception as e:
-                    st.write("⚪ 連線失敗")
-                    
+                        st.write(data["error"])
+                        
                 # 刪除按鈕
                 if st.button("🗑️ 撤退/刪除", key=f"del_{idx}", use_container_width=True):
                     st.session_state['portfolio'].pop(idx)
