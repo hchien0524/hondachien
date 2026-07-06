@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import yfinance as yf
+import re # 🌟 新增：用來執行暴力清洗的正規表示式模組
 
 # ==========================================
 # 🛡️ 系統模組載入區
@@ -112,7 +113,7 @@ with tab2:
             else:
                 st.warning(f"⚠️ 記憶庫中目前沒有 {query_stock} 的歷史資料。")
 
-# --- 分頁 3：雷達海選 (智慧表頭偵測版) ---
+# --- 分頁 3：雷達海選 (暴力清洗版) ---
 with tab3:
     st.subheader("📡 盤後雷達海選 (三大法人 CSV 掃描)")
     st.markdown("請上傳證交所/櫃買中心的「三大法人買賣超 CSV」檔案 (支援**多檔同時上傳**)。")
@@ -129,10 +130,8 @@ with tab3:
                 for enc in encodings:
                     try:
                         uploaded_file.seek(0)
-                        # 🌟 智慧升級：先全部當成字串讀取，不預設表頭
                         temp_df = pd.read_csv(uploaded_file, encoding=enc, header=None, dtype=str, on_bad_lines='skip')
                         
-                        # 🌟 智慧升級：自動往下找尋真正的「表頭」在哪一行
                         header_idx = -1
                         for i in range(min(10, len(temp_df))):
                             row_vals = temp_df.iloc[i].fillna('').astype(str).tolist()
@@ -141,17 +140,15 @@ with tab3:
                                 break
                                 
                         if header_idx != -1:
-                            # 設定真正的表頭，並清除欄位名稱的空白與引號
-                            temp_df.columns = temp_df.iloc[header_idx].astype(str).str.strip().str.replace('"', '')
-                            # 擷取表頭以下的真實數據
+                            temp_df.columns = temp_df.iloc[header_idx].astype(str)
                             df_radar = temp_df.iloc[header_idx + 1:].copy()
-                            break # 成功解析，跳出編碼迴圈
+                            break 
                     except Exception:
                         continue
                 
                 if df_radar is not None:
                     all_dfs.append(df_radar)
-                    st.success(f"✅ {uploaded_file.name} 載入成功！(已自動鎖定真實表頭)")
+                    st.success(f"✅ {uploaded_file.name} 載入成功！")
                 else:
                     st.error(f"❌ {uploaded_file.name} 解析失敗：找不到包含「代號」的欄位。")
                     
@@ -163,35 +160,33 @@ with tab3:
                 try:
                     combined_df = pd.concat(all_dfs, ignore_index=True)
                     
-                    # 自動尋找關鍵欄位
+                    # 🌟 暴力清洗：把欄位名稱裡面的所有空白、換行符號、引號全部清得一乾二淨！
+                    combined_df.columns = combined_df.columns.astype(str).str.replace(r'[\s\n\r"\'\u3000]', '', regex=True)
+                    
+                    # 自動尋找關鍵欄位 (擴大關鍵字範圍，加入「差額」)
                     code_col = next((c for c in combined_df.columns if '代號' in c or '代碼' in c), None)
                     name_col = next((c for c in combined_df.columns if '名稱' in c), None)
-                    net_buy_col = next((c for c in combined_df.columns if '三大法人買賣超' in c or '買賣超' in c), None)
+                    net_buy_col = next((c for c in combined_df.columns if '三大法人買賣超' in c or '買賣超' in c or '差額' in c), None)
                     
                     if code_col and name_col:
-                        # 清洗代號欄位 (去除空白與 NaN)
                         combined_df = combined_df.dropna(subset=[code_col])
                         combined_df[code_col] = combined_df[code_col].astype(str).str.strip()
                         
-                        # 🛡️ 斬殺垃圾資料：剔除 0 開頭(ETF)、7 開頭(權證)，以及底部的「說明」文字
                         mask = (
                             ~combined_df[code_col].str.startswith(('0', '7')) & 
                             ~combined_df[code_col].str.contains('說明|合計', na=False)
                         )
                         filtered_df = combined_df[mask].copy()
                         
-                        # 處理買賣超數字 (去除千分位逗號並轉為數字)
                         if net_buy_col:
                             filtered_df[net_buy_col] = pd.to_numeric(
                                 filtered_df[net_buy_col].astype(str).str.replace(',', '').str.strip(), 
                                 errors='coerce'
                             )
-                            # 依照買超張數由大到小排序
                             filtered_df = filtered_df.sort_values(by=net_buy_col, ascending=False)
                         
                         st.success("🎯 掃描完成！已成功剔除 ETF 與權證，以下為今日法人買超主力股 (前 50 名)：")
                         
-                        # 整理欄位顯示順序
                         cols = filtered_df.columns.tolist()
                         important_cols = [code_col, name_col]
                         if net_buy_col: important_cols.append(net_buy_col)
@@ -200,7 +195,10 @@ with tab3:
                         
                         st.dataframe(filtered_df.head(50), use_container_width=True)
                     else:
-                        st.warning("⚠️ 雖然讀取成功，但找不到「代號」或「買賣超」欄位，顯示原始資料：")
+                        # 🌟 雷達除錯模式：印出真實欄位名稱
+                        st.warning(f"⚠️ 找不到關鍵欄位！系統目前讀到的真實欄位名稱是：")
+                        st.code(combined_df.columns.tolist())
+                        st.info("💡 請總司令將上方灰底框框內的「欄位名稱」複製貼給我，我立刻為您精準校正雷達！")
                         st.dataframe(combined_df, use_container_width=True)
                         
                 except Exception as e:
