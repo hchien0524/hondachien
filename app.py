@@ -121,7 +121,6 @@ def main():
     with tab5:
         st.header("🎯 V31 主力 X 光狙擊機 (Yahoo 籌碼透視)")
         
-        # --- 模式 1：單發精準狙擊 ---
         st.subheader("🔫 模式一：單發精準狙擊")
         col1, col2 = st.columns([1, 3])
         with col1:
@@ -149,7 +148,6 @@ def main():
 
         st.markdown("---")
         
-        # --- 模式 2：持股中心連發狙擊 ---
         st.subheader("⚡ 模式二：持股主將全收錄 (機槍連發)")
         
         if 'portfolio' in st.session_state and st.session_state['portfolio']:
@@ -178,12 +176,10 @@ def main():
                         name = item.get('名稱', '')
                         status_text.text(f"🕵️‍♂️ 正在狙擊第 {i+1}/{len(portfolio_list)} 檔：{code} {name} ...")
                         
-                        # 🌟 嚴格核實防護：每次開槍都換一把新槍，防止 Yahoo 鎖定同一個 Session
                         sniper = yahoo_sniper.YahooSniper()
                         df_result = sniper.scan_target(code)
                         
                         if df_result is not None and not df_result.empty:
-                            # 嘗試寫入資料庫
                             try:
                                 broker_memory.save_daily_data(today_str, code, df_result)
                                 success_count += 1
@@ -193,11 +189,10 @@ def main():
                             fail_list.append(f"{code} (Yahoo 抓取失敗)")
                             
                         progress_bar.progress((i + 1) / len(portfolio_list))
-                        time.sleep(random.uniform(1.5, 3.5)) # 稍微拉長偽裝時間
+                        time.sleep(random.uniform(1.5, 3.5)) 
                         
                     status_text.empty()
                     
-                    # 🌟 戰情報告透明化
                     if success_count == len(portfolio_list):
                         st.success(f"✅ 狙擊任務大獲全勝！成功將 {success_count} 檔主將的籌碼存入記憶庫。")
                     else:
@@ -210,13 +205,28 @@ def main():
         else:
             st.warning("⚠️ 目前「持股監控中心」沒有名單。請先到 Tab 2 加入監控！")
 
+    # ==========================================
+    # 🧠 V31 歷史記憶庫 (智慧下拉選單版)
+    # ==========================================
     with tab6:
         st.header("🧠 歷史記憶庫 (多日籌碼加總)")
         st.markdown("調閱本地資料庫，自動加總過去 N 天的主力買賣超，讓**隔日沖**與**波段鎖碼主力**無所遁形！")
         
         col_m1, col_m2 = st.columns([1, 3])
         with col_m1:
-            query_stock = st.text_input("查詢股票代號:", value="5443", key="query_stock")
+            # 🌟 終極優化：智慧下拉選單
+            if 'portfolio' in st.session_state and st.session_state['portfolio']:
+                portfolio_list = st.session_state['portfolio']
+                # 建立選項清單，例如 ["5443 - 均豪", "2376 - 技嘉"]
+                options = [f"{item.get('代號', '')} - {item.get('名稱', '')}" for item in portfolio_list]
+                selected_option = st.selectbox("🎯 選擇要查詢的持股:", options, key="query_stock_select")
+                # 提取代號 (以 " - " 分割並取第一部分)
+                query_stock = selected_option.split(" - ")[0]
+            else:
+                # 如果持股中心是空的，退回手動輸入模式
+                query_stock = st.text_input("查詢股票代號:", value="5443", key="query_stock_input")
+                st.caption("💡 提示：若在 Tab 2 加入持股，這裡會自動變成下拉選單！")
+                
             query_days = st.slider("查詢天數:", min_value=1, max_value=20, value=5)
             query_btn = st.button("🔍 調閱歷史記憶", type="primary", use_container_width=True)
             
