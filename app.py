@@ -4,6 +4,8 @@ import json
 import time
 import random
 import os
+import zipfile
+import io
 from datetime import datetime
 
 # ==========================================
@@ -52,9 +54,10 @@ st.set_page_config(
 )
 
 # ==========================================
-# 💾 本機硬碟記憶晶片 (永久保存持股與觀察名單)
+# 💾 本機/雲端暫存記憶晶片
 # ==========================================
 DATA_FILE = "hios_data.json"
+DB_FILE = "broker_memory.db"
 
 def load_local_data():
     if not os.path.exists(DATA_FILE):
@@ -67,18 +70,27 @@ def save_local_data(data):
     with open(DATA_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
+def create_backup_zip():
+    """將 JSON 和 DB 打包成 ZIP 供下載"""
+    memory_file = io.BytesIO()
+    with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
+        if os.path.exists(DATA_FILE):
+            zf.write(DATA_FILE)
+        if os.path.exists(DB_FILE):
+            zf.write(DB_FILE)
+    memory_file.seek(0)
+    return memory_file
+
 def main():
-    # 🌟 啟動時自動同步硬碟資料與網頁暫存
+    # 🌟 啟動時自動同步資料與網頁暫存
     local_data = load_local_data()
     
-    # 同步持股中心
     if 'portfolio' not in st.session_state:
         st.session_state['portfolio'] = local_data.get('portfolio', [])
     elif st.session_state['portfolio'] != local_data.get('portfolio', []):
         local_data['portfolio'] = st.session_state['portfolio']
         save_local_data(local_data)
         
-    # 同步觀察名單
     if 'watchlist' not in st.session_state:
         st.session_state['watchlist'] = local_data.get('watchlist', [])
     elif st.session_state['watchlist'] != local_data.get('watchlist', []):
@@ -86,8 +98,41 @@ def main():
         save_local_data(local_data)
 
     st.sidebar.title("🎯 HIOS Wave Radar")
-    st.sidebar.caption("V31 旗艦視覺版 (全自動記憶)")
+    st.sidebar.caption("V31 旗艦視覺版 (手動存檔防護)")
     
+    # ==========================================
+    # 💾 側邊欄：系統記憶存檔與還原 (V31 核心升級)
+    # ==========================================
+    st.sidebar.header("💾 0. 記憶存檔與還原")
+    st.sidebar.markdown("雲端防護機制：每日請手動備份與還原")
+    
+    # 讀檔還原區
+    uploaded_backup = st.sidebar.file_uploader("📥 1. 上班讀檔：上傳 HIOS_Backup.zip", type=['zip'])
+    if uploaded_backup is not None:
+        if st.sidebar.button("🔄 執行記憶還原", type="primary", use_container_width=True):
+            try:
+                with zipfile.ZipFile(uploaded_backup, 'r') as zf:
+                    zf.extractall() # 解壓縮並覆蓋現有檔案
+                st.sidebar.success("✅ 記憶還原成功！系統已滿血復活。")
+                time.sleep(1)
+                st.rerun()
+            except Exception as e:
+                st.sidebar.error(f"還原失敗: {e}")
+                
+    # 存檔下載區
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("📤 **2. 下班存檔：下載最新記憶**")
+    backup_zip = create_backup_zip()
+    today_str = datetime.now().strftime("%Y%m%d")
+    st.sidebar.download_button(
+        label="💾 下載今日系統備份檔 (.zip)",
+        data=backup_zip,
+        file_name=f"HIOS_Backup_{today_str}.zip",
+        mime="application/zip",
+        use_container_width=True
+    )
+    st.sidebar.markdown("---")
+
     st.sidebar.header("📂 1. 數據引擎")
     uploaded_csvs = st.sidebar.file_uploader(
         "上傳法人買賣超 CSV (支援多檔歷史資料)", 
@@ -102,8 +147,6 @@ def main():
     
     if memory_module:
         memory_module.render_memory_module()
-    else:
-        st.sidebar.warning("⚠️ 找不到 `memory_module.py`")
 
     # ==========================================
     # ⚔️ 旗艦級 UI：戰區 Tabs 重構
@@ -150,7 +193,7 @@ def main():
             st.warning("⚠️ 找不到 `backtest_engine.py`")
 
     # ==========================================
-    # 🎯 V31 雙模式狙擊槍 (全自動硬碟讀取版)
+    # 🎯 V31 雙模式狙擊槍
     # ==========================================
     with tab5:
         st.header("🎯 V31 主力 X 光狙擊機 (Yahoo 籌碼透視)")
@@ -174,7 +217,7 @@ def main():
                         today_str = datetime.now().strftime("%Y-%m-%d")
                         broker_memory.init_db()
                         broker_memory.save_daily_data(today_str, target_stock, df_result)
-                        st.info("💾 戰利品已安全存入本地記憶庫！")
+                        st.info("💾 戰利品已安全存入本地記憶庫！請記得在左側邊欄下載備份！")
                     else:
                         st.error("❌ 狙擊失敗！目標失去聯繫或防護過強。")
             else:
@@ -182,12 +225,10 @@ def main():
 
         st.markdown("---")
         
-        # 🌟 觀察名單管理區 (一鍵匯入與永久記憶)
-        st.subheader("👀 觀察名單管理 (本機永久記憶)")
-        
+        st.subheader("👀 觀察名單管理")
         current_watchlist = st.session_state.get('watchlist', [])
         if current_watchlist:
-            st.write(f"**目前硬碟記憶中的觀察名單：** {', '.join([f'{w.get('代號','')} {w.get('名稱','')}' for w in current_watchlist])}")
+            st.write(f"**目前觀察名單：** {', '.join([f'{w.get('代號','')} {w.get('名稱','')}' for w in current_watchlist])}")
             if st.button("🗑️ 清空觀察名單"):
                 st.session_state['watchlist'] = []
                 save_local_data({"portfolio": st.session_state.get('portfolio', []), "watchlist": []})
@@ -206,7 +247,7 @@ def main():
                         added += 1
                 if added > 0:
                     save_local_data({"portfolio": st.session_state.get('portfolio', []), "watchlist": st.session_state['watchlist']})
-                    st.success(f"✅ 成功將 {added} 檔新主將寫入本機硬碟！")
+                    st.success(f"✅ 成功寫入！請記得在左側邊欄下載備份！")
                     time.sleep(1)
                     st.rerun()
                 else:
@@ -214,13 +255,10 @@ def main():
 
         st.markdown("---")
         
-        # 🌟 自動狙擊區 (自動讀取硬碟)
         st.subheader("⚡ 模式二：多目標機槍連發 (持股 + 觀察名單)")
-        
         target_list = []
         seen_codes = set()
         
-        # 合併持股與觀察名單，並去除重複代號
         for item in st.session_state.get('portfolio', []):
             code = str(item.get('代號', ''))
             if code and code not in seen_codes:
@@ -234,8 +272,7 @@ def main():
                 seen_codes.add(code)
                 
         if target_list:
-            st.info(f"🛡️ 系統已從本機硬碟自動載入 {len(target_list)} 檔標的 (含持股與觀察名單)。")
-            
+            st.info(f"🛡️ 系統已載入 {len(target_list)} 檔標的 (含持股與觀察名單)。")
             cols = st.columns(5)
             for i, item in enumerate(target_list):
                 stock_code = item.get('代號', '')
@@ -276,7 +313,7 @@ def main():
                     status_text.empty()
                     
                     if success_count == len(target_list):
-                        st.success(f"✅ 狙擊任務大獲全勝！成功將 {success_count} 檔標的籌碼存入記憶庫。")
+                        st.success(f"✅ 狙擊任務大獲全勝！請務必到左側邊欄點擊「下載今日系統備份檔」！")
                     else:
                         st.warning(f"⚠️ 狙擊任務結束。成功：{success_count} 檔，失敗：{len(fail_list)} 檔。")
                         if fail_list:
@@ -284,10 +321,10 @@ def main():
                 else:
                     st.error("⚠️ 系統警告：找不到 `yahoo_sniper.py` 或 `broker_memory.py`！")
         else:
-            st.warning("⚠️ 目前硬碟中沒有任何持股或觀察名單。請先加入持股，或點擊上方按鈕匯入雷達名單！")
+            st.warning("⚠️ 目前沒有任何持股或觀察名單。")
 
     # ==========================================
-    # 🧠 V31 歷史記憶庫 (雙軌合併下拉選單)
+    # 🧠 V31 歷史記憶庫
     # ==========================================
     with tab6:
         st.header("🧠 歷史記憶庫 (多日籌碼加總)")
@@ -295,7 +332,6 @@ def main():
         
         col_m1, col_m2 = st.columns([1, 3])
         with col_m1:
-            # 🌟 雙軌合併：將硬碟中的持股與觀察名單合併為下拉選單
             p_list = st.session_state.get('portfolio', [])
             w_list = st.session_state.get('watchlist', [])
             
@@ -303,14 +339,13 @@ def main():
             w_options = [f"{item.get('代號', '')} - {item.get('名稱', '')}" for item in w_list if item.get('代號')]
             
             all_options = list(set(p_options + w_options))
-            all_options.sort() # 依代號排序
+            all_options.sort()
             
             if all_options:
-                selected_option = st.selectbox("🎯 選擇要查詢的標的 (含持股與觀察名單):", all_options, key="query_stock_select")
+                selected_option = st.selectbox("🎯 選擇要查詢的標的:", all_options, key="query_stock_select")
                 query_stock = selected_option.split(" - ")[0]
             else:
                 query_stock = st.text_input("查詢股票代號:", value="5443", key="query_stock_input")
-                st.caption("💡 提示：加入持股或觀察名單後，這裡會自動變成下拉選單！")
                 
             query_days = st.slider("查詢天數:", min_value=1, max_value=20, value=5)
             query_btn = st.button("🔍 調閱歷史記憶", type="primary", use_container_width=True)
@@ -325,7 +360,7 @@ def main():
                         st.success(f"🎯 成功調閱 {query_stock} 歷史記憶！以下為區間前 15 大主力：")
                         st.dataframe(df_history, use_container_width=True)
                     else:
-                        st.warning(f"⚠️ 記憶庫中目前沒有 {query_stock} 的歷史資料。請確認代號是否正確，或先執行狙擊任務！")
+                        st.warning(f"⚠️ 記憶庫中目前沒有 {query_stock} 的歷史資料。請確認是否已上傳備份檔，或先執行狙擊任務！")
             else:
                 st.error("⚠️ 系統警告：找不到 `broker_memory.py`，無法調閱記憶庫！")
 
