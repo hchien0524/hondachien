@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
 import json
-import time # 🌟 V31 新增：用於自動狙擊時的防封鎖延遲
+import time
+import random
 from datetime import datetime
 
 # ==========================================
@@ -67,7 +68,6 @@ def main():
     filter_bias_max = st.sidebar.number_input("🔥 月線乖離率上限 (%)", min_value=1.0, max_value=50.0, value=5.0, step=0.5)
     filter_resonance = st.sidebar.checkbox("🤝 嚴格族群濾網 (共振 >= 3)", value=True)
     
-    # 掛載 Base64 記憶模組
     if memory_module:
         memory_module.render_memory_module()
     else:
@@ -97,52 +97,8 @@ def main():
             st.info(f"📂 已成功載入 {len(uploaded_csvs)} 份 CSV 檔案，準備啟動內部迴圈。")
             if strategy_core:
                 try:
-                    # 執行原本的雷達核心
+                    # 🌟 絕對純淨：只執行您原本的雷達核心，不在這裡加任何按鈕
                     strategy_core.run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min)
-                    
-                    # ==========================================
-                    # 🌟 V31 終極連動：雷達榜單全收錄 (自動化情報線)
-                    # ==========================================
-                    if 'radar_results' in st.session_state and st.session_state['radar_results']:
-                        st.markdown("---")
-                        st.subheader("🎯 V31 終極連動：雷達榜單全收錄")
-                        st.markdown("一鍵啟動狙擊槍，自動潛入 Yahoo 抓取前 10 名主將的今日真實籌碼，並存入歷史記憶庫！")
-                        
-                        if st.button("⚡ 將前 10 名真龍送入記憶庫 (自動狙擊)", type="primary", use_container_width=True):
-                            if yahoo_sniper and broker_memory:
-                                # 1. 取得雷達結果並依總分排序，抓出前 10 名
-                                results = st.session_state['radar_results']
-                                sorted_results = sorted(results, key=lambda x: x['🔥 總分'], reverse=True)
-                                top_10_codes = [r['代號'] for r in sorted_results[:10]]
-                                
-                                # 2. 初始化進度條與狙擊槍
-                                progress_bar = st.progress(0)
-                                status_text = st.empty()
-                                sniper = yahoo_sniper.YahooSniper()
-                                broker_memory.init_db()
-                                today_str = datetime.now().strftime("%Y-%m-%d")
-                                
-                                # 3. 啟動自動連發狙擊
-                                success_count = 0
-                                for i, code in enumerate(top_10_codes):
-                                    stock_name = next(r['名稱'] for r in sorted_results if r['代號'] == code)
-                                    status_text.text(f"🕵️‍♂️ 正在狙擊第 {i+1}/{len(top_10_codes)} 檔：{code} {stock_name} ...")
-                                    
-                                    df_result = sniper.scan_target(code)
-                                    
-                                    if df_result is not None and not df_result.empty:
-                                        broker_memory.save_daily_data(today_str, code, df_result)
-                                        success_count += 1
-                                        
-                                    progress_bar.progress((i + 1) / len(top_10_codes))
-                                    # 🛡️ 戰術偽裝：隨機暫停 1~3 秒，避免被 Yahoo 偵測為機器人而封鎖 IP
-                                    time.sleep(random.uniform(1.0, 3.0)) 
-                                    
-                                status_text.empty()
-                                st.success(f"✅ 狙擊任務大獲全勝！成功將 {success_count} 檔真龍的籌碼存入記憶庫。請至「Tab 6 歷史記憶」調閱！")
-                            else:
-                                st.error("⚠️ 系統警告：找不到 `yahoo_sniper.py` 或 `broker_memory.py`，無法執行自動狙擊！")
-                                
                 except Exception as e:
                     st.error(f"雷達運算發生錯誤: {e}")
             else:
@@ -162,36 +118,81 @@ def main():
         else:
             st.warning("⚠️ 找不到 `backtest_engine.py`")
 
+    # ==========================================
+    # 🎯 V31 雙模式狙擊槍 (動線重構)
+    # ==========================================
     with tab5:
         st.header("🎯 V31 主力 X 光狙擊機 (Yahoo 籌碼透視)")
-        st.markdown("輸入股票代號，系統將自動潛入 Yahoo 抓取今日主力進出，並**無聲無息地存入本地記憶庫**。")
         
+        # --- 模式 1：單發精準狙擊 ---
+        st.subheader("🔫 模式一：單發精準狙擊")
         col1, col2 = st.columns([1, 3])
         with col1:
-            target_stock = st.text_input("請輸入股票代號 (例: 5443, 2356):", value="5443", key="sniper_input")
+            target_stock = st.text_input("請輸入股票代號 (例: 5443):", value="5443", key="sniper_input")
             scan_btn = st.button("🚀 啟動單發狙擊", type="primary", use_container_width=True)
             
-        if scan_btn:
-            if target_stock:
+        if scan_btn and target_stock:
+            if yahoo_sniper and broker_memory:
+                with st.spinner(f"🕵️‍♂️ 正在潛入 Yahoo 抓取 {target_stock} 今日籌碼..."):
+                    sniper = yahoo_sniper.YahooSniper()
+                    df_result = sniper.scan_target(target_stock)
+                    
+                    if df_result is not None and not df_result.empty:
+                        st.success(f"✅ 破解成功！已取得 {target_stock} 籌碼明細。")
+                        st.dataframe(df_result, use_container_width=True)
+                        
+                        today_str = datetime.now().strftime("%Y-%m-%d")
+                        broker_memory.init_db()
+                        broker_memory.save_daily_data(today_str, target_stock, df_result)
+                        st.info("💾 戰利品已安全存入本地記憶庫！")
+                    else:
+                        st.error("❌ 狙擊失敗！目標失去聯繫或防護過強。")
+            else:
+                st.error("⚠️ 系統警告：找不到 `yahoo_sniper.py` 或 `broker_memory.py`！")
+
+        st.markdown("---")
+        
+        # --- 模式 2：雷達連發狙擊 ---
+        st.subheader("⚡ 模式二：雷達榜單全收錄 (機槍連發)")
+        st.markdown("系統會自動讀取「Tab 2 雷達掃描」的結果，一鍵將前 10 名主將的籌碼全部抓進記憶庫！")
+        
+        # 檢查雷達是否已經產生了名單
+        if 'radar_results' in st.session_state and st.session_state['radar_results']:
+            results = st.session_state['radar_results']
+            sorted_results = sorted(results, key=lambda x: x['🔥 總分'], reverse=True)
+            top_10_codes = [r['代號'] for r in sorted_results[:10]]
+            
+            st.info(f"📡 系統已成功接收到雷達傳來的 {len(results)} 檔真龍名單！")
+            
+            if st.button(f"🔥 一鍵自動狙擊前 {len(top_10_codes)} 名主將，並存入記憶庫", type="primary", use_container_width=True):
                 if yahoo_sniper and broker_memory:
-                    with st.spinner(f"🕵️‍♂️ 正在潛入 Yahoo 抓取 {target_stock} 今日籌碼..."):
-                        sniper = yahoo_sniper.YahooSniper()
-                        df_result = sniper.scan_target(target_stock)
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    sniper = yahoo_sniper.YahooSniper()
+                    broker_memory.init_db()
+                    today_str = datetime.now().strftime("%Y-%m-%d")
+                    
+                    success_count = 0
+                    for i, code in enumerate(top_10_codes):
+                        stock_name = next(r['名稱'] for r in sorted_results if r['代號'] == code)
+                        status_text.text(f"🕵️‍♂️ 正在狙擊第 {i+1}/{len(top_10_codes)} 檔：{code} {stock_name} ...")
+                        
+                        df_result = sniper.scan_target(code)
                         
                         if df_result is not None and not df_result.empty:
-                            st.success(f"✅ 破解成功！已取得 {target_stock} 籌碼明細。")
-                            st.dataframe(df_result, use_container_width=True)
+                            broker_memory.save_daily_data(today_str, code, df_result)
+                            success_count += 1
                             
-                            today_str = datetime.now().strftime("%Y-%m-%d")
-                            broker_memory.init_db()
-                            broker_memory.save_daily_data(today_str, target_stock, df_result)
-                            st.info("💾 戰利品已安全存入本地記憶庫 (broker_memory.db)！")
-                        else:
-                            st.error("❌ 狙擊失敗！目標失去聯繫或防護過強。")
+                        progress_bar.progress((i + 1) / len(top_10_codes))
+                        # 🛡️ 戰術偽裝：隨機暫停 1~3 秒，防止被 Yahoo 封鎖
+                        time.sleep(random.uniform(1.0, 3.0)) 
+                        
+                    status_text.empty()
+                    st.success(f"✅ 狙擊任務大獲全勝！成功將 {success_count} 檔真龍的籌碼存入記憶庫。請至「Tab 6 歷史記憶」調閱！")
                 else:
                     st.error("⚠️ 系統警告：找不到 `yahoo_sniper.py` 或 `broker_memory.py`！")
-            else:
-                st.warning("⚠️ 總司令，請先輸入股票代號！")
+        else:
+            st.warning("⚠️ 目前沒有雷達名單。請先到「Tab 2 🚀 雷達掃描」上傳 CSV 並執行掃描，名單就會自動傳送過來！")
 
     with tab6:
         st.header("🧠 歷史記憶庫 (多日籌碼加總)")
