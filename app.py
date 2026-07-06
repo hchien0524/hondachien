@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import yfinance as yf
-import re # 🌟 新增：用來執行暴力清洗的正規表示式模組
 
 # ==========================================
 # 🛡️ 系統模組載入區
@@ -113,7 +112,7 @@ with tab2:
             else:
                 st.warning(f"⚠️ 記憶庫中目前沒有 {query_stock} 的歷史資料。")
 
-# --- 分頁 3：雷達海選 (暴力清洗版) ---
+# --- 分頁 3：雷達海選 (修復正則表示式版) ---
 with tab3:
     st.subheader("📡 盤後雷達海選 (三大法人 CSV 掃描)")
     st.markdown("請上傳證交所/櫃買中心的「三大法人買賣超 CSV」檔案 (支援**多檔同時上傳**)。")
@@ -160,10 +159,10 @@ with tab3:
                 try:
                     combined_df = pd.concat(all_dfs, ignore_index=True)
                     
-                    # 🌟 暴力清洗：把欄位名稱裡面的所有空白、換行符號、引號全部清得一乾二淨！
-                    combined_df.columns = combined_df.columns.astype(str).str.replace(r'[\s\n\r"\'\u3000]', '', regex=True)
+                    # 🌟 修復後的暴力清洗：\s 已經包含所有空白與換行，加上去除引號
+                    combined_df.columns = combined_df.columns.astype(str).str.replace(r'[\s"\']', '', regex=True)
                     
-                    # 自動尋找關鍵欄位 (擴大關鍵字範圍，加入「差額」)
+                    # 自動尋找關鍵欄位
                     code_col = next((c for c in combined_df.columns if '代號' in c or '代碼' in c), None)
                     name_col = next((c for c in combined_df.columns if '名稱' in c), None)
                     net_buy_col = next((c for c in combined_df.columns if '三大法人買賣超' in c or '買賣超' in c or '差額' in c), None)
