@@ -131,10 +131,44 @@ def load_strategic_benchmarks():
         return pd.DataFrame()
 
 def render_strategic_benchmarks_ui():
-    """渲染 🛡️ 戰略預備隊 面板 UI"""
+    """渲染 🛡️ 戰略預備隊 面板 UI (含一鍵建檔按鈕)"""
     st.header("🛡️ V32 戰略預備隊 (法人級避險金庫)")
     st.markdown("這裡存放了總司令親自篩選的 **S/A級 投信鐵三角與大戶避險名單**。當大盤崩跌或主將陣亡時，請優先從此金庫挑選換股標的。")
     
+    # 🚀 零摩擦：一鍵建檔按鈕
+    if st.button("📥 點我！一鍵將 16 檔菁英寫入金庫", type="primary"):
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            cursor = conn.cursor()
+            cursor.execute('''CREATE TABLE IF NOT EXISTS strategic_benchmarks (record_date TEXT, stock_id TEXT, stock_name TEXT, rating TEXT, strategy_type TEXT, key_brokers TEXT, entry_bias REAL, PRIMARY KEY (record_date, stock_id))''')
+            insert_sql = '''INSERT INTO strategic_benchmarks (record_date, stock_id, stock_name, rating, strategy_type, key_brokers, entry_bias) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(record_date, stock_id) DO UPDATE SET rating=excluded.rating, strategy_type=excluded.strategy_type, key_brokers=excluded.key_brokers, entry_bias=excluded.entry_bias'''
+            elite_list = [
+                ("1722", "台肥", "S", "大戶避險金庫", "摩根大通, 美商高盛", 0.0),
+                ("2820", "華票", "S", "大戶避險金庫", "摩根大通, 摩根士丹利", 0.0),
+                ("2617", "台航", "S", "大戶避險金庫", "摩根大通, 凱基台北", 0.0),
+                ("1201", "味全", "A-", "大戶避險金庫", "南部大戶連線, 凱基台北", 0.0),
+                ("2855", "統一證", "A+", "投信鐵三角-金融", "投信", 1.87),
+                ("2845", "遠東銀", "A+", "投信鐵三角-金融", "投信", 1.44),
+                ("5876", "上海商銀", "A", "投信鐵三角-金融", "投信", 0.35),
+                ("2356", "英業達", "A", "投信鐵三角-AI肉盾", "投信", -1.86),
+                ("2377", "微星", "A", "投信鐵三角-AI肉盾", "投信", -0.67),
+                ("2382", "廣達", "A", "投信鐵三角-AI肉盾", "投信", 0.31),
+                ("3231", "緯創", "A", "投信鐵三角-AI肉盾", "投信", -1.91),
+                ("2376", "技嘉", "A", "投信鐵三角-AI肉盾", "投信", -3.60),
+                ("2610", "華航", "A", "投信鐵三角-運輸", "投信", 0.16),
+                ("2618", "長榮航", "A", "投信鐵三角-運輸", "投信", 1.10),
+                ("2633", "台灣高鐵", "A", "投信鐵三角-運輸", "投信", 1.22),
+                ("2646", "星宇航空", "A", "投信鐵三角-運輸", "投信", 1.13)
+            ]
+            records = [("2026-07-07", *item) for item in elite_list]
+            cursor.executemany(insert_sql, records)
+            conn.commit()
+            conn.close()
+            st.success("✅ 報告總司令：16 檔菁英已成功寫入金庫！請按鍵盤『R』重新整理網頁。")
+        except Exception as e:
+            st.error(f"寫入失敗: {e}")
+    st.divider()
+
     df_benchmarks = load_strategic_benchmarks()
     
     if not df_benchmarks.empty:
@@ -145,7 +179,7 @@ def render_strategic_benchmarks_ui():
         )
         st.info("💡 **CIO 戰略提示：** 盤中請密切注意這些標的的『關鍵鎖碼分點』是否出現異常賣超。若 S 級標的遭到倒貨，代表大盤將進入無差別下殺，請立刻提高現金水位！")
     else:
-        st.warning("目前資料庫中尚無戰略預備隊名單，請先執行建檔腳本 (seed_benchmarks.py)。")
+        st.warning("目前資料庫中尚無戰略預備隊名單，請點擊上方按鈕進行建檔。")
 
 # ==========================================
 # ⚙️ 系統全域設定
@@ -204,7 +238,6 @@ def main():
     # ==========================================
     # 🚀 主戰情室 (七大核心面板)
     # ==========================================
-    # CIO 註記：這裡成功加入了第七個 Tab！
     tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "🌐 總體風控", 
         "🚀 雷達掃描", 
@@ -212,7 +245,7 @@ def main():
         "⏳ 時光膠囊", 
         "🎯 主力 X 光狙擊", 
         "🗄️ 歷史記憶庫",
-        "🛡️ 戰略預備隊"  # <--- 新增的 Tab 7
+        "🛡️ 戰略預備隊"
     ])
     
     with tab1:
@@ -278,7 +311,6 @@ def main():
         else:
             st.warning("⚠️ 找不到 `broker_memory.py`")
             
-    # CIO 註記：這裡呼叫了 Tab 7 的專屬 UI 函數！
     with tab7:
         render_strategic_benchmarks_ui()
 
