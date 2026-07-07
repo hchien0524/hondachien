@@ -4,6 +4,7 @@ import json
 import zipfile
 import io
 import os
+import sqlite3
 
 # ==========================================
 # 🛡️ 模組安全掛載區 (動態載入，防崩潰機制)
@@ -99,6 +100,54 @@ def restore_from_zip(uploaded_zip):
         return False
 
 # ==========================================
+# 🛡️ V32 戰略預備隊模組 (資料庫讀取與 UI)
+# ==========================================
+def load_strategic_benchmarks():
+    """從 SQLite 資料庫讀取戰略預備隊名單，並依據 S/A 級精準排序"""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        query = """
+            SELECT 
+                stock_id AS '代號', 
+                stock_name AS '名稱', 
+                rating AS '評級', 
+                strategy_type AS '戰略定位', 
+                key_brokers AS '關鍵鎖碼分點', 
+                entry_bias AS '建檔乖離率(%)'
+            FROM strategic_benchmarks
+            ORDER BY 
+                CASE rating 
+                    WHEN 'S' THEN 1 
+                    WHEN 'A+' THEN 2 
+                    WHEN 'A' THEN 3 
+                    WHEN 'A-' THEN 4 
+                    ELSE 5 
+                END
+        """
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        return df
+    except Exception as e:
+        return pd.DataFrame()
+
+def render_strategic_benchmarks_ui():
+    """渲染 🛡️ 戰略預備隊 面板 UI"""
+    st.header("🛡️ V32 戰略預備隊 (法人級避險金庫)")
+    st.markdown("這裡存放了總司令親自篩選的 **S/A級 投信鐵三角與大戶避險名單**。當大盤崩跌或主將陣亡時，請優先從此金庫挑選換股標的。")
+    
+    df_benchmarks = load_strategic_benchmarks()
+    
+    if not df_benchmarks.empty:
+        st.dataframe(
+            df_benchmarks, 
+            use_container_width=True,
+            hide_index=True
+        )
+        st.info("💡 **CIO 戰略提示：** 盤中請密切注意這些標的的『關鍵鎖碼分點』是否出現異常賣超。若 S 級標的遭到倒貨，代表大盤將進入無差別下殺，請立刻提高現金水位！")
+    else:
+        st.warning("目前資料庫中尚無戰略預備隊名單，請先執行建檔腳本 (seed_benchmarks.py)。")
+
+# ==========================================
 # ⚙️ 系統全域設定
 # ==========================================
 st.set_page_config(
@@ -151,16 +200,19 @@ def main():
                 st.sidebar.success("✅ 系統還原成功！請重整網頁。")
             else:
                 st.sidebar.error("❌ 還原失敗，請確認 ZIP 格式。")
+                
     # ==========================================
-    # 🚀 主戰情室 (六大核心面板)
+    # 🚀 主戰情室 (七大核心面板)
     # ==========================================
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    # CIO 註記：這裡成功加入了第七個 Tab！
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "🌐 總體風控", 
         "🚀 雷達掃描", 
         "🛡️ 持股監控", 
         "⏳ 時光膠囊", 
         "🎯 主力 X 光狙擊", 
-        "🗄️ 歷史記憶庫"
+        "🗄️ 歷史記憶庫",
+        "🛡️ 戰略預備隊"  # <--- 新增的 Tab 7
     ])
     
     with tab1:
@@ -172,7 +224,6 @@ def main():
     with tab2:
         st.header("🚀 雷達掃描室 (雙引擎系統)")
         
-        # 🔘 雙模式切換開關
         radar_mode = st.radio(
             "請選擇雷達掃描作戰模式：", 
             ["🛡️ 投信波段真龍 (抓波段主將)", "🥷 主力潛伏妖股 (抓偷吃貨黑手)"], 
@@ -226,59 +277,10 @@ def main():
             broker_memory.render_memory_dashboard()
         else:
             st.warning("⚠️ 找不到 `broker_memory.py`")
+            
+    # CIO 註記：這裡呼叫了 Tab 7 的專屬 UI 函數！
+    with tab7:
+        render_strategic_benchmarks_ui()
 
 if __name__ == "__main__":
     main()
-# ==========================================
-# 🛡️ V32 戰略預備隊模組 (請一鍵複製，貼在 app.py 的最下方)
-# ==========================================
-import sqlite3
-import pandas as pd
-import streamlit as st
-
-def load_strategic_benchmarks():
-    """從 SQLite 資料庫讀取戰略預備隊名單，並依據 S/A 級精準排序"""
-    try:
-        conn = sqlite3.connect('broker_memory.db')
-        # 使用 CASE WHEN 確保 S 級排在最上面，接著是 A+, A, A-
-        query = """
-            SELECT 
-                stock_id AS '代號', 
-                stock_name AS '名稱', 
-                rating AS '評級', 
-                strategy_type AS '戰略定位', 
-                key_brokers AS '關鍵鎖碼分點', 
-                entry_bias AS '建檔乖離率(%)'
-            FROM strategic_benchmarks
-            ORDER BY 
-                CASE rating 
-                    WHEN 'S' THEN 1 
-                    WHEN 'A+' THEN 2 
-                    WHEN 'A' THEN 3 
-                    WHEN 'A-' THEN 4 
-                    ELSE 5 
-                END
-        """
-        df = pd.read_sql_query(query, conn)
-        conn.close()
-        return df
-    except Exception as e:
-        return pd.DataFrame()
-
-def render_strategic_benchmarks_ui():
-    """渲染 🛡️ 戰略預備隊 面板 UI"""
-    st.header("🛡️ V32 戰略預備隊 (法人級避險金庫)")
-    st.markdown("這裡存放了總司令親自篩選的 **S/A級 投信鐵三角與大戶避險名單**。當大盤崩跌或主將陣亡時，請優先從此金庫挑選換股標的。")
-    
-    df_benchmarks = load_strategic_benchmarks()
-    
-    if not df_benchmarks.empty:
-        st.dataframe(
-            df_benchmarks, 
-            use_container_width=True,
-            hide_index=True
-        )
-        st.info("💡 **CIO 戰略提示：** 盤中請密切注意這些標的的『關鍵鎖碼分點』是否出現異常賣超。若 S 級標的遭到倒貨，代表大盤將進入無差別下殺，請立刻提高現金水位！")
-    else:
-        st.warning("目前資料庫中尚無戰略預備隊名單，請先執行建檔腳本。")
-# ==========================================
