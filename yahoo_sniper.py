@@ -4,7 +4,13 @@ import pandas as pd
 import time
 import random
 from datetime import datetime
-import broker_memory
+import streamlit as st
+
+# 安全掛載記憶庫模組
+try:
+    import broker_memory
+except ImportError:
+    broker_memory = None
 
 # ==========================================
 # 🎯 V31 主力 X 光狙擊槍 (實戰破甲版)
@@ -46,7 +52,7 @@ class YahooSniper:
         if not html_content:
             print(f"❌ [狙擊失敗] 目標 {stock_code} 失去聯繫 (404 Not Found 或連線逾時)。")
             return None
-
+            
         # 🌟 破甲 2：降維打擊解析法 (無視 HTML 結構，直接找數學邏輯)
         soup = BeautifulSoup(html_content, "html.parser")
         # 將網頁所有文字抽出，並按行分割
@@ -85,6 +91,62 @@ class YahooSniper:
         else:
             print("⚠️ [解析失敗] 網頁讀取成功，但找不到符合邏輯的券商數據。")
             return None
+
+# ==========================================
+# 🖥️ Streamlit UI 介面渲染模組 (對接 app.py Tab 5)
+# ==========================================
+def render_sniper_module():
+    st.header("🎯 主力 X 光狙擊槍 (實戰破甲版)")
+    st.caption("無視 Yahoo 防火牆，直接抓取今日真實主力進出明細，並自動存入歷史記憶庫。")
+    
+    # 讀取從 Tab 2 (雷達室) 傳遞過來的代號 (一鍵潛龍連動)
+    default_input = st.session_state.get('sniper_input', '')
+    
+    target_input = st.text_input(
+        "請輸入要狙擊的股票代號 (多檔請用半形逗號分隔，例如: 2376,2382,3231)", 
+        value=default_input
+    )
+    
+    if st.button("🔥 一鍵自動狙擊", type="primary"):
+        if not target_input:
+            st.warning("⚠️ 請先輸入股票代號！")
+            return
+            
+        codes = [c.strip() for c in target_input.split(',') if c.strip()]
+        sniper = YahooSniper()
+        
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        for i, code in enumerate(codes):
+            status_text.text(f"🔭 正在狙擊目標 {code} ... ({i+1}/{len(codes)})")
+            df_result = sniper.scan_target(code)
+            
+            if df_result is not None and not df_result.empty:
+                st.success(f"✅ [{code}] 狙擊成功！取得 {len(df_result)} 筆主力明細。")
+                st.dataframe(df_result.head(15), use_container_width=True)
+                
+                # 💾 自動存入歷史記憶庫
+                try:
+                    if broker_memory and hasattr(broker_memory, 'save_daily_chips'):
+                        broker_memory.save_daily_chips(code, df_result)
+                        st.info(f"💾 [{code}] 籌碼已成功存入歷史記憶庫！")
+                    else:
+                        st.warning("⚠️ 找不到 `broker_memory.save_daily_chips`，無法存檔。")
+                except Exception as e:
+                    st.error(f"存檔發生錯誤: {e}")
+            else:
+                st.error(f"❌ [{code}] 狙擊失敗，找不到資料或失去聯繫。")
+                
+            # 擬人化延遲 (保護 IP 不被 Yahoo 封鎖)
+            time.sleep(random.uniform(1.5, 3.0))
+            progress_bar.progress(int(((i + 1) / len(codes)) * 100))
+            
+        status_text.text("🎯 狙擊任務全數完成！")
+        
+        # 任務完成後，清除 session state 避免下次切換 Tab 時重複觸發
+        if 'sniper_input' in st.session_state:
+            del st.session_state['sniper_input']
 
 # ==========================================
 # ⚙️ 系統整合測試
