@@ -125,38 +125,44 @@ def render_v33_ui(uploaded_csvs):
         try:
             df_list = []
             for file in uploaded_csvs:
-                try:
-                    df_temp = pd.read_csv(file, encoding='utf-8')
-                except UnicodeDecodeError:
-                    file.seek(0)
-                    raw_data = file.read()
-                    decoded_content = raw_data.decode('cp950', errors='ignore')
-                    df_temp = pd.read_csv(io.StringIO(decoded_content))
+                file.seek(0)
+                raw_data = file.read()
                 
-                # 🧹 1. 清理所有欄位名稱的隱藏空白
-                df_temp.columns = df_temp.columns.str.strip()
+                # 1. 雙語解碼
+                try:
+                    decoded_content = raw_data.decode('utf-8')
+                except UnicodeDecodeError:
+                    decoded_content = raw_data.decode('cp950', errors='ignore')
+                
+                # 2. 自動尋找真實的欄位標題行 (跳過官方的幽靈標題)
+                lines = decoded_content.splitlines()
+                header_idx = 0
+                for i, line in enumerate(lines):
+                    if '代號' in line or '代碼' in line:
+                        header_idx = i
+                        break
+                
+                # 3. 從真實標題行開始讀取
+                df_temp = pd.read_csv(io.StringIO(decoded_content), skiprows=header_idx)
+                df_temp.columns = df_temp.columns.str.strip().str.replace('"', '')
                 df_list.append(df_temp)
                 
             df_all = pd.concat(df_list, ignore_index=True)
             
-            # 🎯 2. AI 動態欄位追蹤 (不管叫什麼名字，只要有關鍵字就抓出來)
+            # 4. AI 動態欄位追蹤
             id_col = next((col for col in df_all.columns if '代號' in col or '代碼' in col), None)
             name_col = next((col for col in df_all.columns if '名稱' in col), None)
             buy_col = next((col for col in df_all.columns if '買賣超' in col), None)
             
             if not id_col or not name_col or not buy_col:
-                st.error(f"❌ CSV 欄位解析失敗！目前讀取到的欄位有：{list(df_all.columns)}")
-                st.info("請確認您的 CSV 檔案中包含『代號』、『名稱』與『買賣超』等關鍵字。")
+                st.error(f"❌ 找不到關鍵欄位！目前讀取到的欄位有：{list(df_all.columns)}")
                 return
                 
-            # 🔄 3. 統一重新命名為標準格式
             df_all = df_all.rename(columns={id_col: '代號', name_col: '名稱', buy_col: '買賣超'})
-            
-            # 🧹 4. 清理代號中的奇怪符號 (例如 ="2330" 變成 2330)
             df_all['代號'] = df_all['代號'].astype(str).str.replace('=', '').str.replace('"', '').str.strip()
             df_all['買賣超'] = df_all['買賣超'].apply(clean_numeric)
             
-            # 5. 群組加總 (計算波段總買超)
+            # 5. 群組加總
             df_agg = df_all.groupby(['代號', '名稱'])['買賣超'].sum().reset_index()
             df_agg = df_agg[df_agg['買賣超'] > 0] 
             
