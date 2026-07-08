@@ -42,12 +42,10 @@ def run_v33_scoring(df_aggregated, twii_pct):
     """執行 V33 三位一體動態積分運算"""
     results = []
     
-    # 建立進度條
     progress_text = "🌐 V33 聯網雷達掃描中，請稍候..."
     my_bar = st.progress(0, text=progress_text)
     total_stocks = len(df_aggregated)
     
-    # 使用多執行緒加速抓取 Yahoo 報價
     with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
         future_to_row = {executor.submit(fetch_stock_data, str(row['代號'])): row for _, row in df_aggregated.iterrows()}
         
@@ -62,11 +60,9 @@ def run_v33_scoring(df_aggregated, twii_pct):
             
             net_buy = row['買賣超']
             vol = market_data['volume']
-            if vol <= 0 or net_buy <= 0: continue # 只看有買超且有成交量的
+            if vol <= 0 or net_buy <= 0: continue 
             
-            # ==========================================
             # 🎯 維度一：籌碼集中度 (滿分 40 分)
-            # ==========================================
             concentration = (net_buy / vol) * 100
             if concentration > 15: score_c = 40
             elif concentration > 10: score_c = 30
@@ -74,9 +70,7 @@ def run_v33_scoring(df_aggregated, twii_pct):
             elif concentration > 2: score_c = 10
             else: score_c = 0
             
-            # ==========================================
             # 🎯 維度二：相對抗跌係數 RS (滿分 30 分)
-            # ==========================================
             pct_change = (market_data['close'] - market_data['prev_close']) / market_data['prev_close'] * 100
             rs = pct_change - twii_pct
             if rs > 3: score_rs = 30
@@ -84,9 +78,7 @@ def run_v33_scoring(df_aggregated, twii_pct):
             elif rs > -1: score_rs = 10
             else: score_rs = 0
             
-            # ==========================================
             # 🎯 維度三：洗盤型態/下影線 (滿分 30 分)
-            # ==========================================
             total_range = market_data['high'] - market_data['low']
             lower_shadow = min(market_data['open'], market_data['close']) - market_data['low']
             shadow_ratio = lower_shadow / total_range if total_range > 0 else 0
@@ -103,7 +95,6 @@ def run_v33_scoring(df_aggregated, twii_pct):
             elif total_score >= 50: rating = "🛡️ B級觀察"
             else: rating = "淘汰"
             
-            # 只保留及格的標的
             if total_score >= 50:
                 results.append({
                     '評級': rating,
@@ -120,7 +111,7 @@ def run_v33_scoring(df_aggregated, twii_pct):
                     '型態分': score_p
                 })
                 
-    my_bar.empty() # 清除進度條
+    my_bar.empty() 
     return pd.DataFrame(results)
 
 def render_v33_ui(uploaded_csvs):
@@ -134,17 +125,24 @@ def render_v33_ui(uploaded_csvs):
         
     if st.button("🚀 啟動 V33 真龍積分運算", type="primary"):
         try:
-            # 1. 讀取並合併所有 CSV
+            # 1. 讀取並合併所有 CSV (加入 Big5 雙語翻譯機)
             df_list = []
             for file in uploaded_csvs:
-                df_temp = pd.read_csv(file)
+                try:
+                    # 先嘗試國際標準 UTF-8
+                    df_temp = pd.read_csv(file, encoding='utf-8')
+                except UnicodeDecodeError:
+                    # 若報錯，切換為台灣本土 Big5 編碼
+                    file.seek(0) # 將檔案指標移回開頭
+                    df_temp = pd.read_csv(file, encoding='big5', errors='ignore')
                 df_list.append(df_temp)
+                
             df_all = pd.concat(df_list, ignore_index=True)
             
             # 2. 尋找買賣超欄位並清理數據
             buy_col = next((col for col in df_all.columns if '買賣超' in col), None)
             if not buy_col:
-                st.error("CSV 中找不到包含『買賣超』的欄位！")
+                st.error("CSV 中找不到包含『買賣超』的欄位！請確認上傳的檔案格式。")
                 return
                 
             df_all[buy_col] = df_all[buy_col].apply(clean_numeric)
@@ -152,7 +150,7 @@ def render_v33_ui(uploaded_csvs):
             # 3. 群組加總 (計算波段總買超)
             df_agg = df_all.groupby(['代號', '名稱'])[buy_col].sum().reset_index()
             df_agg = df_agg.rename(columns={buy_col: '買賣超'})
-            df_agg = df_agg[df_agg['買賣超'] > 0] # 只保留波段買超大於 0 的
+            df_agg = df_agg[df_agg['買賣超'] > 0] 
             
             st.success(f"✅ 成功融合 {len(uploaded_csvs)} 份 CSV，共篩選出 {len(df_agg)} 檔波段買超標的，準備聯網分析...")
             
