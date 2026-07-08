@@ -103,14 +103,14 @@ def run_grand_unification(uploaded_csvs):
         
     st.info(f"✅ 成功萃取 {len(df_clean)} 檔純淨個股。正在啟動聯網快取中心...")
     
-    # 這裡未來可以把 df_clean 派發給 V32 和 V33 模組
-    # 為了展示大一統，我們先做一個基礎的融合戰報
-    
     report_data = []
     my_bar = st.progress(0, text="🌐 正在獲取市場動能與籌碼數據...")
     
-    for i, row in df_clean.iterrows():
-        my_bar.progress((i + 1) / len(df_clean), text=f"🌐 掃描進度: {i+1}/{len(df_clean)}")
+    # 🛡️ 防爆裝甲版迴圈：使用 enumerate 並強制鎖定最高進度為 1.0
+    for idx, (_, row) in enumerate(df_clean.iterrows()):
+        progress_val = min((idx + 1) / len(df_clean), 1.0)
+        my_bar.progress(progress_val, text=f"🌐 掃描進度: {idx+1}/{len(df_clean)}")
+        
         market_data = fetch_market_data(row['代號'])
         
         if market_data and market_data['5日總量'] > 0:
