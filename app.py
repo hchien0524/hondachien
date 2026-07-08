@@ -30,9 +30,12 @@ except ImportError: yahoo_sniper = None
 try: import broker_memory
 except ImportError: broker_memory = None
 
-# 👑 掛載全新的 V33 真龍引擎
 try: import strategy_v33_dragon
 except ImportError: strategy_v33_dragon = None
+
+# 👑 掛載全新的 V34 中央大腦
+try: import war_room_engine
+except ImportError: war_room_engine = None
 
 # ==========================================
 # 💾 本機記憶與雲端備份系統 (V31 核心防護)
@@ -128,22 +131,35 @@ def render_strategic_benchmarks_ui():
 # ==========================================
 # ⚙️ 系統全域設定
 # ==========================================
-st.set_page_config(page_title="HIOS Wave Radar V33", page_icon="🎯", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="HIOS Wave Radar V34", page_icon="🎯", layout="wide", initial_sidebar_state="expanded")
 load_local_memory()
 
 def main():
     st.sidebar.title("🎯 HIOS Wave Radar")
-    st.sidebar.caption("V33 真龍積分版")
+    st.sidebar.caption("V34 戰情指揮中心版")
     
     st.sidebar.header("📂 1. 數據引擎")
     uploaded_csvs = st.sidebar.file_uploader("上傳法人買賣超 CSV (建議上傳 3~5 天份量)", type=['csv'], accept_multiple_files=True)
     
-    st.sidebar.header("⚙️ 2. 動態濾網設定")
+    # ==========================================
+    # 🔥 V34 戰情指揮中心 (一鍵總掃描)
+    # ==========================================
+    st.sidebar.header("🔥 2. 戰情指揮中心")
+    if uploaded_csvs and len(uploaded_csvs) > 0:
+        if st.sidebar.button("🔴 一鍵啟動每日總掃描", type="primary", use_container_width=True):
+            if war_room_engine:
+                st.title("🔥 V34 總司令終極戰報")
+                war_room_engine.run_grand_unification(uploaded_csvs)
+                st.stop() # 🛑 停止渲染下方舊版分頁，讓總司令專注於終極戰報！
+            else:
+                st.sidebar.error("找不到 `war_room_engine.py` 模組！請確認檔案已建立。")
+                
+    st.sidebar.header("⚙️ 3. 動態濾網設定")
     filter_vol_min = st.sidebar.number_input("💧 5日均量下限 (張)", min_value=0, max_value=20000, value=3000, step=500)
     filter_bias_max = st.sidebar.number_input("🔥 月線乖離率上限 (%)", min_value=1.0, max_value=50.0, value=5.0, step=0.5)
     filter_resonance = st.sidebar.checkbox("🤝 嚴格族群濾網 (共振 >= 3)", value=True)
     
-    st.sidebar.header("🗄️ 3. 系統記憶與備份")
+    st.sidebar.header("🗄️ 4. 系統記憶與備份")
     if st.sidebar.button("💾 手動儲存本機記憶", use_container_width=True):
         if save_local_memory(): st.sidebar.success("✅ 記憶已成功寫入本機硬碟！")
         else: st.sidebar.error("❌ 寫入失敗！")
@@ -157,7 +173,7 @@ def main():
             else: st.sidebar.error("❌ 還原失敗，請確認 ZIP 格式。")
                 
     # ==========================================
-    # 🚀 主戰情室 (八大核心面板)
+    # 🚀 主戰情室 (八大核心面板 - 舊版獨立模組)
     # ==========================================
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
         "🌐 總體風控", "🚀 雷達掃描", "🛡️ 持股監控", "⏳ 時光膠囊", 
