@@ -1,161 +1,103 @@
-import requests
-from bs4 import BeautifulSoup
-import pandas as pd
-import time
-import random
-from datetime import datetime
 import streamlit as st
+import pandas as pd
+import re
 
-# 安全掛載記憶庫模組
-try:
-    import broker_memory
-except ImportError:
-    broker_memory = None
-
-# ==========================================
-# 🎯 V31 主力 X 光狙擊槍 (實戰破甲版)
-# ==========================================
-
-class YahooSniper:
-    def __init__(self):
-        # 🛡️ 狙擊手的偽裝衣
-        self.user_agents = [
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
-        ]
-        self.session = requests.Session()
-
-    def get_headers(self):
-        return {
-            "User-Agent": random.choice(self.user_agents),
-            "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Referer": "https://tw.stock.yahoo.com/"
-        }
-
-    def scan_target(self, stock_code ):
-        print(f"🔭 [狙擊鏡開啟] 正在鎖定目標 {stock_code} 的主力動向...")
-        
-        # 🌟 破甲 1：自動嘗試上市 (.TW) 與上櫃 (.TWO) 網址
-        suffixes = [".TW", ".TWO", ""]
-        html_content = None
-        
-        for suffix in suffixes:
-            url = f"https://tw.stock.yahoo.com/quote/{stock_code}{suffix}/broker-trading"
-            try:
-                response = self.session.get(url, headers=self.get_headers( ), timeout=10)
-                if response.status_code == 200:
-                    html_content = response.text
-                    break # 成功抓到網頁，跳出迴圈
-            except requests.exceptions.RequestException:
-                continue
-                
-        if not html_content:
-            print(f"❌ [狙擊失敗] 目標 {stock_code} 失去聯繫 (404 Not Found 或連線逾時)。")
-            return None
-            
-        # 🌟 破甲 2：降維打擊解析法 (無視 HTML 結構，直接找數學邏輯)
-        soup = BeautifulSoup(html_content, "html.parser")
-        # 將網頁所有文字抽出，並按行分割
-        text = soup.get_text(separator='\n')
-        lines = [line.strip() for line in text.split('\n') if line.strip()]
-        
-        broker_list = []
-        seen_brokers = set() # 防止重複抓取
-        
-        for i in range(len(lines) - 3):
-            broker_name = lines[i]
-            
-            # 排除純數字與常見的介面干擾文字
-            if len(broker_name) >= 2 and not broker_name.isdigit() and broker_name not in ["買進", "賣出", "買賣超", "券商", "張數", "買進張數", "賣出張數"]:
-                try:
-                    # 嘗試將接下來的三行轉換為數字 (去除千分位逗號)
-                    buy = int(lines[i+1].replace(',', ''))
-                    sell = int(lines[i+2].replace(',', ''))
-                    net = int(lines[i+3].replace(',', ''))
-                    
-                    # 🎯 終極驗證：買進 - 賣出 必須等於 買賣超！
-                    if buy >= 0 and sell >= 0 and (buy - sell == net):
-                        if broker_name not in seen_brokers:
-                            broker_list.append([broker_name, buy, sell, net])
-                            seen_brokers.add(broker_name)
-                except ValueError:
-                    # 如果轉換數字失敗，代表這不是券商資料，繼續往下找
-                    continue
-
-        if broker_list:
-            df = pd.DataFrame(broker_list, columns=['券商名稱', '買進張數', '賣出張數', '買賣超張數'])
-            # 依照買賣超張數由大到小排序
-            df = df.sort_values(by='買賣超張數', ascending=False).reset_index(drop=True)
-            print(f"✅ [破解成功] 已突破 Yahoo 防火牆，取得 {len(df)} 筆真實籌碼明細！")
-            return df
-        else:
-            print("⚠️ [解析失敗] 網頁讀取成功，但找不到符合邏輯的券商數據。")
-            return None
-
-# ==========================================
-# 🖥️ Streamlit UI 介面渲染模組 (對接 app.py Tab 5)
-# ==========================================
 def render_sniper_module():
-    st.header("🎯 主力 X 光狙擊槍 (實戰破甲版)")
-    st.caption("無視 Yahoo 防火牆，直接抓取今日真實主力進出明細，並自動存入歷史記憶庫。")
+    st.header("🎯 主力 X 光狙擊室")
+    st.markdown("請從戰情中心將目標「一鍵上膛」，並貼上籌碼明細進行 X 光解碼。")
     
-    # 讀取從 Tab 2 (雷達室) 傳遞過來的代號 (一鍵潛龍連動)
-    default_input = st.session_state.get('sniper_input', '')
+    # ==========================================
+    # 🎯 自動填彈系統：讀取中央大腦傳遞過來的目標
+    # ==========================================
+    default_target = st.session_state.get('target_id', '')
     
-    target_input = st.text_input(
-        "請輸入要狙擊的股票代號 (多檔請用半形逗號分隔，例如: 2376,2382,3231)", 
-        value=default_input
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        # 這裡的 value=default_target 就是自動填入的關鍵！
+        stock_id = st.text_input("🎯 狙擊目標 (股票代號)", value=default_target)
+    
+    with col2:
+        st.info("💡 提示：在【🔥 終極戰報】點擊「一鍵上膛」後，代號會自動填入此處。")
+
+    # ==========================================
+    # 📥 數據輸入區
+    # ==========================================
+    raw_data = st.text_area(
+        "📥 請貼上主力分點買賣超數據 (直接從券商軟體複製貼上)：", 
+        height=250, 
+        placeholder="請貼上格式如：\n摩根士丹利 619 25 594\n富邦 575 4 571\n..."
     )
     
-    if st.button("🔥 一鍵自動狙擊", type="primary"):
-        if not target_input:
-            st.warning("⚠️ 請先輸入股票代號！")
+    # ==========================================
+    # 🔫 狙擊解析引擎
+    # ==========================================
+    if st.button("🔫 啟動 X 光掃描", type="primary", use_container_width=True):
+        if not stock_id:
+            st.warning("⚠️ 請先輸入或上膛股票代號！")
+            return
+        if not raw_data.strip():
+            st.warning("⚠️ 請貼上籌碼數據！")
             return
             
-        codes = [c.strip() for c in target_input.split(',') if c.strip()]
-        sniper = YahooSniper()
-        
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        for i, code in enumerate(codes):
-            status_text.text(f"🔭 正在狙擊目標 {code} ... ({i+1}/{len(codes)})")
-            df_result = sniper.scan_target(code)
+        with st.spinner("正在解碼主力籌碼陣型..."):
+            parsed_data = []
+            lines = raw_data.strip().split('\n')
             
-            if df_result is not None and not df_result.empty:
-                st.success(f"✅ [{code}] 狙擊成功！取得 {len(df_result)} 筆主力明細。")
-                st.dataframe(df_result.head(15), use_container_width=True)
+            for line in lines:
+                # 移除多餘的空白並分割
+                parts = re.split(r'\s+', line.strip())
                 
-                # 💾 自動存入歷史記憶庫
-                try:
-                    if broker_memory and hasattr(broker_memory, 'save_daily_chips'):
-                        broker_memory.save_daily_chips(code, df_result)
-                        st.info(f"💾 [{code}] 籌碼已成功存入歷史記憶庫！")
+                # 嘗試解析常見的券商格式 (分點名稱, 買進, 賣出, 買賣超)
+                if len(parts) >= 4:
+                    try:
+                        # 假設最後三個是數字 (買進, 賣出, 買賣超)
+                        net = int(parts[-1].replace(',', ''))
+                        sell = int(parts[-2].replace(',', ''))
+                        buy = int(parts[-3].replace(',', ''))
+                        
+                        # 前面的部分合併為分點名稱
+                        broker_name = " ".join(parts[:-3])
+                        # 如果 broker_name 開頭是數字 (例如複製到序號 0, 1, 2)，用正則表達式去掉它
+                        broker_name = re.sub(r'^\d+\s+', '', broker_name)
+                        
+                        parsed_data.append({
+                            "分點名稱": broker_name,
+                            "買進(張)": buy,
+                            "賣出(張)": sell,
+                            "買賣超(張)": net
+                        })
+                    except ValueError:
+                        continue # 跳過無法解析的雜訊行
+            
+            if parsed_data:
+                df = pd.DataFrame(parsed_data)
+                # 依照買賣超排序
+                df = df.sort_values(by="買賣超(張)", ascending=False).reset_index(drop=True)
+                
+                st.success(f"✅ 成功解碼 【{stock_id}】 的主力陣型！")
+                
+                # 顯示數據表格
+                st.dataframe(df, use_container_width=True)
+                
+                # ==========================================
+                # 🦅 CIO 戰情速報
+                # ==========================================
+                top_buy = df[df['買賣超(張)'] > 0]
+                top_sell = df[df['買賣超(張)'] < 0].sort_values(by="買賣超(張)", ascending=True)
+                
+                st.subheader("🦅 CIO 戰情速報")
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    if not top_buy.empty:
+                        st.metric("🔥 最大鎖碼主力", top_buy.iloc[0]['分點名稱'], f"+{top_buy.iloc[0]['買賣超(張)']} 張")
                     else:
-                        st.warning("⚠️ 找不到 `broker_memory.save_daily_chips`，無法存檔。")
-                except Exception as e:
-                    st.error(f"存檔發生錯誤: {e}")
+                        st.metric("🔥 最大鎖碼主力", "無", "0 張")
+                        
+                with col_b:
+                    if not top_sell.empty:
+                        st.metric("⚠️ 最大倒貨主力", top_sell.iloc[0]['分點名稱'], f"{top_sell.iloc[0]['買賣超(張)']} 張")
+                    else:
+                        st.metric("⚠️ 最大倒貨主力", "無", "0 張")
+                    
             else:
-                st.error(f"❌ [{code}] 狙擊失敗，找不到資料或失去聯繫。")
-                
-            # 擬人化延遲 (保護 IP 不被 Yahoo 封鎖)
-            time.sleep(random.uniform(1.5, 3.0))
-            progress_bar.progress(int(((i + 1) / len(codes)) * 100))
-            
-        status_text.text("🎯 狙擊任務全數完成！")
-        
-        # 任務完成後，清除 session state 避免下次切換 Tab 時重複觸發
-        if 'sniper_input' in st.session_state:
-            del st.session_state['sniper_input']
-
-# ==========================================
-# ⚙️ 系統整合測試
-# ==========================================
-if __name__ == "__main__":
-    sniper = YahooSniper()
-    target_stock = "2376" # 測試技嘉
-    df_result = sniper.scan_target(target_stock)
-    
-    if df_result is not None:
-        print(f"\n📊 {target_stock} 今日真實主力進出明細：")
-        print(df_result.head(10))
+                st.error("❌ 數據解析失敗，請確認貼上的格式是否正確（需包含：分點名稱、買進、賣出、買賣超）。")
