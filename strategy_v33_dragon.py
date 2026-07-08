@@ -16,10 +16,8 @@ def clean_numeric(val):
 def fetch_stock_data(ticker):
     """透過 yfinance 抓取個股 K 線數據 (支援上市與上櫃)"""
     try:
-        # 先嘗試上市 (.TW)
         hist = yf.Ticker(f"{ticker}.TW").history(period="5d")
         if hist.empty:
-            # 若無資料，嘗試上櫃 (.TWO)
             hist = yf.Ticker(f"{ticker}.TWO").history(period="5d")
             
         if not hist.empty and len(hist) >= 2:
@@ -31,7 +29,7 @@ def fetch_stock_data(ticker):
                 'high': today['High'],
                 'low': today['Low'],
                 'close': today['Close'],
-                'volume': today['Volume'] / 1000, # 轉換為「張」
+                'volume': today['Volume'] / 1000, 
                 'prev_close': prev_close
             }
     except Exception:
@@ -125,47 +123,54 @@ def render_v33_ui(uploaded_csvs):
         
     if st.button("🚀 啟動 V33 真龍積分運算", type="primary"):
         try:
-            # 1. 讀取並合併所有 CSV (100% 防彈底層解碼器)
             df_list = []
             for file in uploaded_csvs:
                 try:
-                    # 先嘗試國際標準 UTF-8
                     df_temp = pd.read_csv(file, encoding='utf-8')
                 except UnicodeDecodeError:
-                    # 若報錯，使用 Python 底層強制解碼 (無視亂碼)
                     file.seek(0)
                     raw_data = file.read()
-                    # 將 bytes 強制用 cp950 (台灣 Windows 預設) 解碼，遇到無法辨識的字元直接忽略
                     decoded_content = raw_data.decode('cp950', errors='ignore')
                     df_temp = pd.read_csv(io.StringIO(decoded_content))
+                
+                # 🧹 1. 清理所有欄位名稱的隱藏空白
+                df_temp.columns = df_temp.columns.str.strip()
                 df_list.append(df_temp)
                 
             df_all = pd.concat(df_list, ignore_index=True)
             
-            # 2. 尋找買賣超欄位並清理數據
+            # 🎯 2. AI 動態欄位追蹤 (不管叫什麼名字，只要有關鍵字就抓出來)
+            id_col = next((col for col in df_all.columns if '代號' in col or '代碼' in col), None)
+            name_col = next((col for col in df_all.columns if '名稱' in col), None)
             buy_col = next((col for col in df_all.columns if '買賣超' in col), None)
-            if not buy_col:
-                st.error("CSV 中找不到包含『買賣超』的欄位！請確認上傳的檔案格式。")
+            
+            if not id_col or not name_col or not buy_col:
+                st.error(f"❌ CSV 欄位解析失敗！目前讀取到的欄位有：{list(df_all.columns)}")
+                st.info("請確認您的 CSV 檔案中包含『代號』、『名稱』與『買賣超』等關鍵字。")
                 return
                 
-            df_all[buy_col] = df_all[buy_col].apply(clean_numeric)
+            # 🔄 3. 統一重新命名為標準格式
+            df_all = df_all.rename(columns={id_col: '代號', name_col: '名稱', buy_col: '買賣超'})
             
-            # 3. 群組加總 (計算波段總買超)
-            df_agg = df_all.groupby(['代號', '名稱'])[buy_col].sum().reset_index()
-            df_agg = df_agg.rename(columns={buy_col: '買賣超'})
+            # 🧹 4. 清理代號中的奇怪符號 (例如 ="2330" 變成 2330)
+            df_all['代號'] = df_all['代號'].astype(str).str.replace('=', '').str.replace('"', '').str.strip()
+            df_all['買賣超'] = df_all['買賣超'].apply(clean_numeric)
+            
+            # 5. 群組加總 (計算波段總買超)
+            df_agg = df_all.groupby(['代號', '名稱'])['買賣超'].sum().reset_index()
             df_agg = df_agg[df_agg['買賣超'] > 0] 
             
             st.success(f"✅ 成功融合 {len(uploaded_csvs)} 份 CSV，共篩選出 {len(df_agg)} 檔波段買超標的，準備聯網分析...")
             
-            # 4. 抓取大盤基準
+            # 6. 抓取大盤基準
             twii = yf.Ticker("^TWII").history(period="5d")
             twii_pct = (twii['Close'].iloc[-1] - twii['Close'].iloc[-2]) / twii['Close'].iloc[-2] * 100
             st.info(f"📈 今日大盤基準漲跌幅：{twii_pct:.2f}%")
             
-            # 5. 執行 V33 核心運算
+            # 7. 執行 V33 核心運算
             df_result = run_v33_scoring(df_agg, twii_pct)
             
-            # 6. 顯示結果
+            # 8. 顯示結果
             if not df_result.empty:
                 df_result = df_result.sort_values(by='總分', ascending=False).reset_index(drop=True)
                 st.balloons()
