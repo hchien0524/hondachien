@@ -3,12 +3,18 @@ import pandas as pd
 import yfinance as yf
 import concurrent.futures
 import io
+import numpy as np
 
 def clean_numeric(val):
+    """清理 CSV 中的數字格式 (加入 NaN 防彈裝甲)"""
+    if pd.isna(val):  # 遇到空值直接當作 0
+        return 0.0
     if isinstance(val, str):
         val = val.replace(',', '').strip()
-    try: return float(val)
-    except: return 0.0
+    try: 
+        return float(val)
+    except: 
+        return 0.0
 
 def fetch_stock_data(ticker):
     try:
@@ -55,6 +61,7 @@ def run_v33_scoring(df_aggregated, twii_pct):
             vol_today = market_data['volume_today']
             vol_5d = market_data['volume_5d']
             
+            # 🎯 濾網 1：剔除今日成交量 < 500 張的冷門股
             if vol_today < 500 or net_buy <= 0 or vol_5d <= 0: continue 
             
             # 🎯 維度一：波段籌碼集中度 (滿分 40 分)
@@ -88,6 +95,7 @@ def run_v33_scoring(df_aggregated, twii_pct):
             elif total_score >= 70: rating = "🦅 A級潛龍"
             else: rating = "淘汰"
             
+            # 🎯 濾網 2：只顯示 70 分以上的菁英
             if total_score >= 70:
                 results.append({
                     '評級': rating,
@@ -138,7 +146,11 @@ def render_v33_ui(uploaded_csvs):
             
             id_col = next((col for col in df_all.columns if '代號' in col or '代碼' in col), None)
             name_col = next((col for col in df_all.columns if '名稱' in col), None)
-            buy_col = next((col for col in df_all.columns if '買賣超' in col), None)
+            
+            # 🎯 優先抓取「三大法人買賣超股數」，若無則抓「買賣超」
+            buy_col = next((col for col in df_all.columns if '三大法人買賣超股數' in col), None)
+            if not buy_col:
+                buy_col = next((col for col in df_all.columns if '買賣超' in col), None)
             
             if not id_col or not name_col or not buy_col:
                 st.error(f"❌ 找不到關鍵欄位！目前讀取到的欄位有：{list(df_all.columns)}")
@@ -147,7 +159,7 @@ def render_v33_ui(uploaded_csvs):
             df_all = df_all.rename(columns={id_col: '代號', name_col: '名稱', buy_col: '買賣超'})
             df_all['代號'] = df_all['代號'].astype(str).str.replace('=', '').str.replace('"', '').str.strip()
             
-            # 🎯 關鍵修正：將 CSV 的「股」除以 1000 轉換為「張」
+            # 🎯 關鍵修正：套用防彈裝甲，並將「股」除以 1000 轉換為「張」
             df_all['買賣超'] = df_all['買賣超'].apply(clean_numeric) / 1000
             
             df_agg = df_all.groupby(['代號', '名稱'])['買賣超'].sum().reset_index()
