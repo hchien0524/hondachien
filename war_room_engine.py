@@ -11,9 +11,6 @@ from datetime import datetime
 session = requests.Session()
 session.headers.update({'User-Agent': 'Mozilla/5.0'})
 
-# ==========================================
-# 🛡️ 1. 統一資料清洗管線 (Data Pipeline)
-# ==========================================
 def clean_numeric(val):
     if pd.isna(val): return 0.0
     if isinstance(val, str): val = val.replace(',', '').strip()
@@ -21,7 +18,6 @@ def clean_numeric(val):
     except: return 0.0
 
 def process_raw_csvs(uploaded_csvs):
-    """將多份 CSV 洗成一份純淨的股票清單"""
     df_list = []
     for file in uploaded_csvs:
         file.seek(0)
@@ -43,43 +39,38 @@ def process_raw_csvs(uploaded_csvs):
             df_clean = df_temp[[id_col, name_col, buy_col]].copy()
             df_clean.columns = ['代號', '名稱', '買賣超']
             df_clean['代號'] = df_clean['代號'].astype(str).str.replace(r'\D', '', regex=True)
-            # 剔除權證與 ETF
             df_clean = df_clean[df_clean['代號'].str.len() == 4]
             df_clean['買賣超'] = df_clean['買賣超'].apply(clean_numeric) / 1000
             df_list.append(df_clean)
             
     if not df_list: return pd.DataFrame()
-    
     df_all = pd.concat(df_list, ignore_index=True)
     df_agg = df_all.groupby('代號').agg({'名稱': 'first', '買賣超': 'sum'}).reset_index()
     return df_agg[df_agg['買賣超'] > 0]
 
-# ==========================================
-# 🌐 2. 統一聯網快取中心 (API Gateway)
-# ==========================================
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_market_data(ticker):
-    """抓取 K 線，並加入快取與降速防護"""
     try:
-        time.sleep(0.3) # 降速防封鎖
+        time.sleep(0.3)
         hist = yf.Ticker(f"{ticker}.TW", session=session).history(period="5d")
         if hist.empty: hist = yf.Ticker(f"{ticker}.TWO", session=session).history(period="5d")
         if not hist.empty and len(hist) >= 2:
+            prev_close = hist['Close'].iloc[-2]
+            today = hist.iloc[-1]
             return {
                 '代號': ticker,
-                '今日收盤': hist['Close'].iloc[-1],
-                '今日成交量': hist['Volume'].iloc[-1] / 1000,
-                '5日總量': hist['Volume'].sum() / 1000,
-                '漲跌幅(%)': round((hist['Close'].iloc[-1] - hist['Close'].iloc[-2]) / hist['Close'].iloc[-2] * 100, 2)
+                'open': today['Open'],
+                'high': today['High'],
+                'low': today['Low'],
+                'close': today['Close'],
+                'prev_close': prev_close,
+                'volume_today': today['Volume'] / 1000,
+                'volume_5d': hist['Volume'].sum() / 1000
             }
     except: pass
     return None
 
-# ==========================================
-# 💾 3. 自動寫入歷史金庫 (Auto-Archiving)
-# ==========================================
 def save_to_history_db(df_report):
-    """將今日戰報自動存入 SQLite"""
     try:
         conn = sqlite3.connect('broker_memory.db')
         today_str = datetime.now().strftime("%Y-%m-%d")
@@ -91,9 +82,6 @@ def save_to_history_db(df_report):
         st.error(f"資料庫寫入失敗: {e}")
         return False
 
-# ==========================================
-# 🚀 4. 戰情大融合主程式 (The Pipeline)
-# ==========================================
 def run_grand_unification(uploaded_csvs):
     st.info("⚙️ 中央大腦啟動：正在清洗資料並過濾雜訊...")
     df_clean = process_raw_csvs(uploaded_csvs)
@@ -101,47 +89,79 @@ def run_grand_unification(uploaded_csvs):
         st.error("❌ 資料清洗失敗，請確認 CSV 格式。")
         return
         
-    st.info(f"✅ 成功萃取 {len(df_clean)} 檔純淨個股。正在啟動聯網快取中心...")
+    # 抓取大盤基準
+    twii = yf.Ticker("^TWII", session=session).history(period="5d")
+    twii_pct = (twii['Close'].iloc[-1] - twii['Close'].iloc[-2]) / twii['Close'].iloc[-2] * 100
+    st.info(f"📈 今日大盤基準漲跌幅：{twii_pct:.2f}%")
     
     report_data = []
-    my_bar = st.progress(0, text="🌐 正在獲取市場動能與籌碼數據...")
+    my_bar = st.progress(0, text="🌐 正在進行 V33 嚴格積分運算...")
     
-    # 🛡️ 防爆裝甲版迴圈：使用 enumerate 並強制鎖定最高進度為 1.0
     for idx, (_, row) in enumerate(df_clean.iterrows()):
         progress_val = min((idx + 1) / len(df_clean), 1.0)
         my_bar.progress(progress_val, text=f"🌐 掃描進度: {idx+1}/{len(df_clean)}")
         
         market_data = fetch_market_data(row['代號'])
         
-        if market_data and market_data['5日總量'] > 0:
-            concentration = (row['買賣超'] / market_data['5日總量']) * 100
+        if market_data and market_data['volume_5d'] > 0 and market_data['volume_today'] > 500:
+            net_buy = row['買賣超']
+            vol_5d = market_data['volume_5d']
             
-            # 簡單的 V33 雛形判定 (可擴充)
-            rating = "🛡️ 觀察"
-            if concentration > 10 and market_data['漲跌幅(%)'] > 0: rating = "👑 S級真龍"
-            elif concentration > 5: rating = "🦅 A級潛龍"
+            # 1. 籌碼集中度積分
+            concentration = (net_buy / vol_5d) * 100
+            if concentration > 15: score_c = 40
+            elif concentration > 10: score_c = 30
+            elif concentration > 5: score_c = 20
+            elif concentration > 2: score_c = 10
+            else: score_c = 0
             
-            if concentration > 2: # 只顯示有一定集中度的標的
+            # 2. 相對抗跌積分
+            pct_change = (market_data['close'] - market_data['prev_close']) / market_data['prev_close'] * 100
+            rs = pct_change - twii_pct
+            if rs > 3: score_rs = 30
+            elif rs > 1: score_rs = 20
+            elif rs > -1: score_rs = 10
+            else: score_rs = 0
+            
+            # 3. 洗盤型態積分 (下影線)
+            total_range = market_data['high'] - market_data['low']
+            lower_shadow = min(market_data['open'], market_data['close']) - market_data['low']
+            shadow_ratio = lower_shadow / total_range if total_range > 0 else 0
+            if shadow_ratio > 0.6: score_p = 30
+            elif shadow_ratio > 0.4: score_p = 20
+            elif shadow_ratio > 0.2: score_p = 10
+            else: score_p = 0
+            
+            total_score = score_c + score_rs + score_p
+            
+            # 嚴格濾網：總分必須 >= 70 才放行
+            if total_score >= 85: rating = "👑 S級真龍"
+            elif total_score >= 70: rating = "🦅 A級潛龍"
+            else: rating = "淘汰"
+            
+            if rating != "淘汰":
                 report_data.append({
                     '戰略評級': rating,
+                    '總分': total_score,
                     '代號': row['代號'],
                     '名稱': row['名稱'],
-                    '波段買超(張)': int(row['買賣超']),
-                    '籌碼集中度(%)': round(concentration, 2),
-                    '今日收盤': round(market_data['今日收盤'], 2),
-                    '漲跌幅(%)': market_data['漲跌幅(%)']
+                    '波段買超(張)': int(net_buy),
+                    '集中度(%)': round(concentration, 2),
+                    '今日漲跌(%)': round(pct_change, 2),
+                    '籌碼分': score_c,
+                    '抗跌分': score_rs,
+                    '型態分': score_p
                 })
                 
     my_bar.empty()
     df_report = pd.DataFrame(report_data)
     
     if not df_report.empty:
-        df_report = df_report.sort_values(by='籌碼集中度(%)', ascending=False).reset_index(drop=True)
-        st.success("🎯 三合一終極戰報生成完畢！")
+        df_report = df_report.sort_values(by=['總分', '集中度(%)'], ascending=[False, False]).reset_index(drop=True)
+        st.success(f"🎯 嚴格篩選完畢！從 {len(df_clean)} 檔中淬鍊出 {len(df_report)} 檔 S/A 級菁英！")
         st.dataframe(df_report, use_container_width=True)
         
-        # 自動存檔
         if save_to_history_db(df_report):
             st.toast("💾 戰報已自動備份至歷史記憶庫！")
     else:
-        st.warning("⚠️ 今日無符合條件之標的。")
+        st.warning("⚠️ 今日無任何個股達到 70 分以上的真龍標準。請保持空手！")
