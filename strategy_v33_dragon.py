@@ -4,6 +4,13 @@ import yfinance as yf
 import concurrent.futures
 import io
 import time
+import requests
+
+# 🎭 偽裝成正常瀏覽器，避免被 Yahoo 阻擋
+session = requests.Session()
+session.headers.update({
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+})
 
 def clean_numeric(val):
     if pd.isna(val): return 0.0
@@ -12,13 +19,17 @@ def clean_numeric(val):
     try: return float(val)
     except: return 0.0
 
-def fetch_stock_data(ticker):
+# 💾 加入快取機制：抓過的股票會記在記憶體 1 小時，斷線重跑也不怕！
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_stock_data_cached(ticker):
     try:
-        # 🛡️ 降速機制：避免再次被 Yahoo 封鎖
-        time.sleep(0.2) 
-        hist = yf.Ticker(f"{ticker}.TW").history(period="5d")
+        time.sleep(0.5) # 🚦 強制降速 0.5 秒，保護 IP 不被封鎖
+        
+        t_tw = yf.Ticker(f"{ticker}.TW", session=session)
+        hist = t_tw.history(period="5d")
         if hist.empty:
-            hist = yf.Ticker(f"{ticker}.TWO").history(period="5d")
+            t_two = yf.Ticker(f"{ticker}.TWO", session=session)
+            hist = t_two.history(period="5d")
             
         if not hist.empty and len(hist) >= 2:
             prev_close = hist['Close'].iloc[-2]
@@ -41,28 +52,29 @@ def fetch_stock_data(ticker):
 
 def run_v33_scoring(df_aggregated, twii_pct):
     results = []
-    progress_text = "🌐 V33 聯網雷達掃描中，請稍候..."
+    progress_text = "🌐 V33 聯網雷達掃描中 (已啟動防封鎖與快取機制)..."
     my_bar = st.progress(0, text=progress_text)
     total_stocks = len(df_aggregated)
     
-    # 🛡️ 降低併發數從 20 降到 5，保護 API
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        future_to_row = {executor.submit(fetch_stock_data, str(row['代號'])): row for _, row in df_aggregated.iterrows()}
+    # 🚦 將併發數降至 3，確保安全過關
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        future_to_row = {executor.submit(fetch_stock_data_cached, str(row['代號'])): row for _, row in df_aggregated.iterrows()}
         
         completed = 0
         rate_limit_hit = False
         
         for future in concurrent.futures.as_completed(future_to_row):
-            if rate_limit_hit: continue # 若被封鎖則停止後續處理
+            if rate_limit_hit: continue 
             
             row = future_to_row[future]
             completed += 1
-            my_bar.progress(completed / total_stocks, text=f"🌐 掃描進度: {completed}/{total_stocks} 檔")
+            # 顯示進度，讓總司令知道系統還活著
+            my_bar.progress(completed / total_stocks, text=f"🌐 掃描進度: {completed}/{total_stocks} 檔 (安全降速模式，預計需 1~2 分鐘)")
             
             market_data = future.result()
             
             if market_data == "RATE_LIMITED":
-                st.error("⚠️ Yahoo API 限制連線 (Too Many Requests)。請等待 10 分鐘後再試。")
+                st.error("⚠️ Yahoo API 依然限制連線中。請再等待 10 分鐘後重試。")
                 rate_limit_hit = True
                 continue
                 
@@ -147,7 +159,6 @@ def render_v33_ui(uploaded_csvs):
                 df_temp = pd.read_csv(io.StringIO(decoded_content), skiprows=header_idx)
                 df_temp.columns = df_temp.columns.str.strip().str.replace('"', '')
                 
-                # 🎯 核心修正：在單一檔案內先找出正確欄位，並標準化
                 id_col = next((col for col in df_temp.columns if '代號' in col or '代碼' in col), None)
                 name_col = next((col for col in df_temp.columns if '名稱' in col), None)
                 buy_col = next((col for col in df_temp.columns if '三大法人買賣超股數' in col), None)
@@ -155,34 +166,27 @@ def render_v33_ui(uploaded_csvs):
                     buy_col = next((col for col in df_temp.columns if '買賣超' in col), None)
                 
                 if id_col and name_col and buy_col:
-                    # 只保留這三個欄位，並統一命名，徹底杜絕 Concat 錯位問題
                     df_clean = df_temp[[id_col, name_col, buy_col]].copy()
                     df_clean.columns = ['代號', '名稱', '買賣超']
                     
-                    # 清理代號：只留數字
                     df_clean['代號'] = df_clean['代號'].astype(str).str.replace(r'\D', '', regex=True)
-                    # 剔除權證與 ETF (只留 4 碼純股票)
                     df_clean = df_clean[df_clean['代號'].str.len() == 4]
                     
-                    # 轉換張數
                     df_clean['買賣超'] = df_clean['買賣超'].apply(clean_numeric) / 1000
-                    
                     df_list.append(df_clean)
                 
             if not df_list:
                 st.error("❌ 所有檔案皆無法解析出有效欄位，請確認 CSV 格式。")
                 return
                 
-            # 安全合併
             df_all = pd.concat(df_list, ignore_index=True)
-            
-            # 群組加總
             df_agg = df_all.groupby('代號').agg({'名稱': 'first', '買賣超': 'sum'}).reset_index()
             df_agg = df_agg[df_agg['買賣超'] > 0] 
             
             st.success(f"✅ 成功融合 {len(uploaded_csvs)} 份 CSV，共篩選出 {len(df_agg)} 檔純淨個股，準備聯網分析...")
             
-            twii = yf.Ticker("^TWII").history(period="5d")
+            # 抓取大盤基準 (也加上 session 保護)
+            twii = yf.Ticker("^TWII", session=session).history(period="5d")
             twii_pct = (twii['Close'].iloc[-1] - twii['Close'].iloc[-2]) / twii['Close'].iloc[-2] * 100
             st.info(f"📈 今日大盤基準漲跌幅：{twii_pct:.2f}%")
             
