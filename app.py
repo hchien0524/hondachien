@@ -7,7 +7,7 @@ import os
 import sqlite3
 
 # ==========================================
-# 🛡️ 模組安全掛載區 (動態載入，防崩潰機制)
+# 🛡️ 模組安全掛載區
 # ==========================================
 try: import strategy_core
 except ImportError: strategy_core = None
@@ -23,8 +23,6 @@ try: import yahoo_sniper
 except ImportError: yahoo_sniper = None
 try: import broker_memory
 except ImportError: broker_memory = None
-try: import strategy_v33_dragon
-except ImportError: strategy_v33_dragon = None
 try: import war_room_engine
 except ImportError: war_room_engine = None
 
@@ -113,34 +111,47 @@ def main():
     st.sidebar.download_button(label="📥 下載系統備份檔 (ZIP)", data=create_backup_zip(), file_name="Hios_Backup.zip", mime="application/zip", use_container_width=True)
                 
     # ==========================================
-    # 🚀 主戰情室 (完美對齊的 9 大分頁)
+    # 🚀 主戰情室 (精簡為 7 大核心分頁)
     # ==========================================
-    tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "🔥 終極戰報", 
         "🌐 總體風控", 
-        "🚀 雷達掃描", 
         "🛡️ 持股監控", 
         "⏳ 時光膠囊", 
         "🎯 主力 X 光狙擊", 
         "🗄️ 歷史記憶庫", 
-        "🛡️ 戰略預備隊", 
-        "👑 V33 真龍雷達"
+        "🛡️ 戰略預備隊"
     ])
     
-    with tab0:
+    with tab1:
         st.header("🔥 V34 總司令終極戰報")
-        if 'v34_report' in st.session_state:
-            st.success(f"🎯 嚴格篩選完畢！共淬鍊出 {len(st.session_state['v34_report'])} 檔 S/A 級菁英！(已自動寫入資料庫)")
-            st.dataframe(st.session_state['v34_report'], use_container_width=True, hide_index=True)
-            st.info("💡 **CIO 戰略提示：** 請複製上方您感興趣的股票代號（如 8033），切換到【🎯 主力 X 光狙擊】分頁，立刻查出背後是哪個主力分點在鎖碼！")
+        if 'v34_report' in st.session_state and not st.session_state['v34_report'].empty:
+            df_report = st.session_state['v34_report']
+            st.success(f"🎯 嚴格篩選完畢！共淬鍊出 {len(df_report)} 檔 S/A 級菁英！(已自動寫入資料庫)")
+            st.dataframe(df_report, use_container_width=True, hide_index=True)
+            
+            st.divider()
+            # 🎯 終極修復：一鍵送往 X 光狙擊室
+            st.subheader("🎯 發現獵物？一鍵送往 X 光狙擊室")
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                # 建立下拉選單選項 (例如: "4938 - 和碩")
+                options = df_report['代號'].astype(str) + " - " + df_report['名稱']
+                selected_target = st.selectbox("請選擇要狙擊的標的：", options.tolist())
+            with col2:
+                st.write("") # 排版對齊用
+                st.write("")
+                if st.button("🔫 一鍵上膛 (送至 X 光)", type="primary", use_container_width=True):
+                    target_id = selected_target.split(" - ")[0]
+                    # 將代號寫入 Session State，讓 X 光模組讀取
+                    st.session_state['sniper_target'] = target_id
+                    st.session_state['target_id'] = target_id 
+                    st.success(f"✅ {selected_target} 已上膛！請點擊上方【🎯 主力 X 光狙擊】分頁開槍！")
         else:
             st.info("👈 請從左側邊欄上傳 CSV，並點擊「🔴 一鍵啟動每日總掃描」來生成今日戰報。")
 
-    with tab1:
-        if market_filter: market_filter.render_market_dashboard()
     with tab2:
-        st.header("🚀 雷達掃描室 (舊版 V32)")
-        st.info("此功能已整合至左側『一鍵總掃描』，保留此頁供單獨測試使用。")
+        if market_filter: market_filter.render_market_dashboard()
     with tab3:
         if portfolio_monitor: portfolio_monitor.render_portfolio_monitor()
     with tab4:
@@ -151,8 +162,6 @@ def main():
         if broker_memory: broker_memory.render_memory_dashboard()
     with tab7:
         render_strategic_benchmarks_ui()
-    with tab8:
-        if strategy_v33_dragon: strategy_v33_dragon.render_v33_ui(uploaded_csvs)
 
 if __name__ == "__main__":
     main()
