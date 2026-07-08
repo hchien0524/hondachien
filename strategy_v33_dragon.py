@@ -6,8 +6,7 @@ import io
 import numpy as np
 
 def clean_numeric(val):
-    """清理 CSV 中的數字格式 (加入 NaN 防彈裝甲)"""
-    if pd.isna(val):  # 遇到空值直接當作 0
+    if pd.isna(val): 
         return 0.0
     if isinstance(val, str):
         val = val.replace(',', '').strip()
@@ -61,10 +60,8 @@ def run_v33_scoring(df_aggregated, twii_pct):
             vol_today = market_data['volume_today']
             vol_5d = market_data['volume_5d']
             
-            # 🎯 濾網 1：剔除今日成交量 < 500 張的冷門股
             if vol_today < 500 or net_buy <= 0 or vol_5d <= 0: continue 
             
-            # 🎯 維度一：波段籌碼集中度 (滿分 40 分)
             concentration = (net_buy / vol_5d) * 100
             if concentration > 15: score_c = 40
             elif concentration > 10: score_c = 30
@@ -72,7 +69,6 @@ def run_v33_scoring(df_aggregated, twii_pct):
             elif concentration > 2: score_c = 10
             else: score_c = 0
             
-            # 🎯 維度二：相對抗跌係數 RS (滿分 30 分)
             pct_change = (market_data['close'] - market_data['prev_close']) / market_data['prev_close'] * 100
             rs = pct_change - twii_pct
             if rs > 3: score_rs = 30
@@ -80,7 +76,6 @@ def run_v33_scoring(df_aggregated, twii_pct):
             elif rs > -1: score_rs = 10
             else: score_rs = 0
             
-            # 🎯 維度三：洗盤型態/下影線 (滿分 30 分)
             total_range = market_data['high'] - market_data['low']
             lower_shadow = min(market_data['open'], market_data['close']) - market_data['low']
             shadow_ratio = lower_shadow / total_range if total_range > 0 else 0
@@ -95,7 +90,6 @@ def run_v33_scoring(df_aggregated, twii_pct):
             elif total_score >= 70: rating = "🦅 A級潛龍"
             else: rating = "淘汰"
             
-            # 🎯 濾網 2：只顯示 70 分以上的菁英
             if total_score >= 70:
                 results.append({
                     '評級': rating,
@@ -147,7 +141,6 @@ def render_v33_ui(uploaded_csvs):
             id_col = next((col for col in df_all.columns if '代號' in col or '代碼' in col), None)
             name_col = next((col for col in df_all.columns if '名稱' in col), None)
             
-            # 🎯 優先抓取「三大法人買賣超股數」，若無則抓「買賣超」
             buy_col = next((col for col in df_all.columns if '三大法人買賣超股數' in col), None)
             if not buy_col:
                 buy_col = next((col for col in df_all.columns if '買賣超' in col), None)
@@ -157,15 +150,19 @@ def render_v33_ui(uploaded_csvs):
                 return
                 
             df_all = df_all.rename(columns={id_col: '代號', name_col: '名稱', buy_col: '買賣超'})
-            df_all['代號'] = df_all['代號'].astype(str).str.replace('=', '').str.replace('"', '').str.strip()
             
-            # 🎯 關鍵修正：套用防彈裝甲，並將「股」除以 1000 轉換為「張」
+            # 🧹 終極暴力清理：只留數字，且長度必須剛好是 4 碼 (純台股)
+            df_all['代號'] = df_all['代號'].astype(str).str.replace(r'\D', '', regex=True)
+            df_all = df_all[df_all['代號'].str.len() == 4]
+            df_all = df_all[~df_all['代號'].str.startswith('00')]
+            
+            df_all['名稱'] = df_all['名稱'].astype(str).str.strip()
             df_all['買賣超'] = df_all['買賣超'].apply(clean_numeric) / 1000
             
-            df_agg = df_all.groupby(['代號', '名稱'])['買賣超'].sum().reset_index()
+            df_agg = df_all.groupby('代號').agg({'名稱': 'first', '買賣超': 'sum'}).reset_index()
             df_agg = df_agg[df_agg['買賣超'] > 0] 
             
-            st.success(f"✅ 成功融合 {len(uploaded_csvs)} 份 CSV，共篩選出 {len(df_agg)} 檔波段買超標的，準備聯網分析...")
+            st.success(f"✅ 成功融合 {len(uploaded_csvs)} 份 CSV，剔除上萬檔權證與 ETF 後，共篩選出 {len(df_agg)} 檔純淨個股，準備聯網分析...")
             
             twii = yf.Ticker("^TWII").history(period="5d")
             twii_pct = (twii['Close'].iloc[-1] - twii['Close'].iloc[-2]) / twii['Close'].iloc[-2] * 100
@@ -176,10 +173,10 @@ def render_v33_ui(uploaded_csvs):
             if not df_result.empty:
                 df_result = df_result.sort_values(by='總分', ascending=False).reset_index(drop=True)
                 st.balloons()
-                st.subheader(f"🎯 掃描完成！經過嚴格篩選，僅存 {len(df_result)} 檔 S/A 級菁英")
+                st.subheader(f"🎯 掃描完成！經過嚴格篩選，僅存 {len(df_result)} 檔 S/A 級個股菁英")
                 st.dataframe(df_result, use_container_width=True)
             else:
-                st.warning("⚠️ 掃描完成，今日無任何標的達到 70 分以上的真龍標準。請保持空手！")
+                st.warning("⚠️ 掃描完成，今日無任何個股達到 70 分以上的真龍標準。請保持空手！")
                 
         except Exception as e:
             st.error(f"運算過程中發生錯誤: {e}")
