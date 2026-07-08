@@ -5,6 +5,11 @@ import zipfile
 import io
 import os
 import sqlite3
+import time
+import requests
+from bs4 import BeautifulSoup
+import re
+from datetime import datetime
 
 # ==========================================
 # 🛡️ 模組安全掛載區
@@ -29,6 +34,9 @@ except ImportError: war_room_engine = None
 DATA_FILE = "hios_data.json"
 DB_FILE = "broker_memory.db"
 
+# ==========================================
+# 🧠 核心記憶與備份系統
+# ==========================================
 def load_local_memory():
     if os.path.exists(DATA_FILE):
         try:
@@ -80,12 +88,48 @@ def render_strategic_benchmarks_ui():
     else:
         st.warning("目前資料庫中尚無戰略預備隊名單。")
 
-st.set_page_config(page_title="HIOS Wave Radar V34", page_icon="🎯", layout="wide", initial_sidebar_state="expanded")
+# ==========================================
+# 🛸 批量爬蟲引擎 (Yahoo 專用)
+# ==========================================
+def fetch_and_parse_yahoo(stock_id):
+    url = f"https://tw.stock.yahoo.com/quote/{stock_id}/broker-trading"
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64 )'}
+    try:
+        res = requests.get(url, headers=headers, timeout=5)
+        if res.status_code == 200:
+            soup = BeautifulSoup(res.text, 'html.parser')
+            lines = [text.strip() for text in soup.stripped_strings]
+            
+            parsed_data = []
+            is_yahoo = any("買超券商" in line or "賣超券商" in line for line in lines)
+            if is_yahoo:
+                headers_set = {"買超券商", "買進", "賣出", "買超張數", "賣超券商", "賣超張數"}
+                filtered = [l for l in lines if l not in headers_set]
+                i = 0
+                while i < len(filtered) - 3:
+                    broker = filtered[i]
+                    try:
+                        buy = int(filtered[i+1].replace(',', ''))
+                        sell = int(filtered[i+2].replace(',', ''))
+                        net = int(filtered[i+3].replace(',', ''))
+                        parsed_data.append((stock_id, broker, buy, sell, net))
+                        i += 4
+                    except ValueError:
+                        i += 1
+            return parsed_data
+    except Exception:
+        pass
+    return []
+
+# ==========================================
+# ⚙️ 系統全域設定
+# ==========================================
+st.set_page_config(page_title="HIOS Wave Radar V34.5", page_icon="🎯", layout="wide", initial_sidebar_state="expanded")
 load_local_memory()
 
 def main():
     st.sidebar.title("🎯 HIOS Wave Radar")
-    st.sidebar.caption("V34 戰情指揮中心版")
+    st.sidebar.caption("V34.5 批量狙擊版")
     
     st.sidebar.header("📂 1. 數據引擎")
     uploaded_csvs = st.sidebar.file_uploader("上傳法人買賣超 CSV", type=['csv'], accept_multiple_files=True)
@@ -111,40 +155,89 @@ def main():
     st.sidebar.download_button(label="📥 下載系統備份檔 (ZIP)", data=create_backup_zip(), file_name="Hios_Backup.zip", mime="application/zip", use_container_width=True)
                 
     # ==========================================
-    # 🚀 主戰情室 (精簡為 7 大核心分頁)
+    # 🚀 主戰情室
     # ==========================================
     tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-        "🔥 終極戰報", 
-        "🌐 總體風控", 
-        "🛡️ 持股監控", 
-        "⏳ 時光膠囊", 
-        "🎯 主力 X 光狙擊", 
-        "🗄️ 歷史記憶庫", 
-        "🛡️ 戰略預備隊"
+        "🔥 終極戰報", "🌐 總體風控", "🛡️ 持股監控", "⏳ 時光膠囊", 
+        "🎯 主力 X 光狙擊", "🗄️ 歷史記憶庫", "🛡️ 戰略預備隊"
     ])
     
     with tab1:
         st.header("🔥 V34 總司令終極戰報")
         if 'v34_report' in st.session_state and not st.session_state['v34_report'].empty:
             df_report = st.session_state['v34_report']
-            st.success(f"🎯 嚴格篩選完畢！共淬鍊出 {len(df_report)} 檔 S/A 級菁英！(已自動寫入資料庫)")
+            st.success(f"🎯 嚴格篩選完畢！共淬鍊出 {len(df_report)} 檔 S/A 級菁英！")
             st.dataframe(df_report, use_container_width=True, hide_index=True)
             
             st.divider()
-            # 🎯 終極修復：一鍵送往 X 光狙擊室
-            st.subheader("🎯 發現獵物？一鍵送往 X 光狙擊室")
+            
+            # ==========================================
+            # 🛸 終極武器：批量 X 光掃描
+            # ==========================================
+            st.subheader("🛸 終極武器：批量 X 光掃描 (全自動寫入記憶庫)")
+            st.markdown("一鍵啟動背景爬蟲，將上方所有真龍標的之「主力分點明細」全數抓取並歸檔。")
+            
+            if st.button("🛸 啟動批量掃描與歸檔", type="primary"):
+                stock_list = df_report['代號'].astype(str).tolist()
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                try:
+                    conn = sqlite3.connect(DB_FILE)
+                    cursor = conn.cursor()
+                    cursor.execute('''
+                        CREATE TABLE IF NOT EXISTS broker_records (
+                            record_date TEXT, stock_id TEXT, broker_name TEXT, 
+                            buy_vol INTEGER, sell_vol INTEGER, net_vol INTEGER,
+                            PRIMARY KEY (record_date, stock_id, broker_name)
+                        )
+                    ''')
+                    
+                    today_str = datetime.now().strftime("%Y-%m-%d")
+                    total_stocks = len(stock_list)
+                    success_count = 0
+                    
+                    for i, sid in enumerate(stock_list):
+                        status_text.text(f"🔍 正在狙擊 {sid} ({i+1}/{total_stocks})...")
+                        
+                        # 呼叫爬蟲引擎
+                        parsed_data = fetch_and_parse_yahoo(sid)
+                        
+                        if parsed_data:
+                            records = [(today_str, sid, broker, buy, sell, net) for (sid, broker, buy, sell, net) in parsed_data]
+                            cursor.executemany('''
+                                INSERT INTO broker_records (record_date, stock_id, broker_name, buy_vol, sell_vol, net_vol)
+                                VALUES (?, ?, ?, ?, ?, ?)
+                                ON CONFLICT(record_date, stock_id, broker_name) 
+                                DO UPDATE SET buy_vol=excluded.buy_vol, sell_vol=excluded.sell_vol, net_vol=excluded.net_vol
+                            ''', records)
+                            conn.commit()
+                            success_count += 1
+                            
+                        # 🛡️ 防禦機制：休眠 1 秒避免被 Yahoo 封鎖 IP
+                        time.sleep(1)
+                        progress_bar.progress((i + 1) / total_stocks)
+                        
+                    conn.close()
+                    status_text.text(f"✅ 批量掃描完成！共成功歸檔 {success_count} 檔標的之主力數據。")
+                    st.balloons()
+                    
+                except Exception as e:
+                    st.error(f"批量掃描發生錯誤: {e}")
+
+            st.divider()
+            
+            # 🎯 單兵狙擊 (保留給想單獨看某一檔的總司令)
+            st.subheader("🎯 單兵狙擊：送往 X 光狙擊室")
             col1, col2 = st.columns([3, 1])
             with col1:
-                # 建立下拉選單選項 (例如: "4938 - 和碩")
                 options = df_report['代號'].astype(str) + " - " + df_report['名稱']
-                selected_target = st.selectbox("請選擇要狙擊的標的：", options.tolist())
+                selected_target = st.selectbox("請選擇要單獨狙擊的標的：", options.tolist())
             with col2:
-                st.write("") # 排版對齊用
+                st.write("") 
                 st.write("")
-                if st.button("🔫 一鍵上膛 (送至 X 光)", type="primary", use_container_width=True):
+                if st.button("🔫 一鍵上膛 (送至 X 光)", use_container_width=True):
                     target_id = selected_target.split(" - ")[0]
-                    # 將代號寫入 Session State，讓 X 光模組讀取
-                    st.session_state['sniper_target'] = target_id
                     st.session_state['target_id'] = target_id 
                     st.success(f"✅ {selected_target} 已上膛！請點擊上方【🎯 主力 X 光狙擊】分頁開槍！")
         else:
