@@ -25,7 +25,13 @@ def process_raw_csvs(uploaded_csvs):
         except: decoded = raw_data.decode('cp950', errors='ignore')
         
         lines = decoded.splitlines()
-        header_idx = next((i for i, line in enumerate(lines) if '代號' in line or '代碼' in line), 0)
+        
+        # 🎯 終極修復：必須同時包含「代號/代碼」與「名稱」，才是真正的表頭！
+        header_idx = 0
+        for i, line in enumerate(lines):
+            if ('代號' in line or '代碼' in line) and '名稱' in line:
+                header_idx = i
+                break
         
         df_temp = pd.read_csv(io.StringIO(decoded), skiprows=header_idx)
         df_temp.columns = df_temp.columns.str.strip().str.replace('"', '')
@@ -74,7 +80,6 @@ def save_to_history_db(df_report):
         conn = sqlite3.connect('broker_memory.db')
         today_str = datetime.now().strftime("%Y-%m-%d")
         df_report['日期'] = today_str
-        # 🛡️ 更改表格名稱為 v34_war_reports，避開舊表格的 Schema 衝突
         df_report.to_sql('v34_war_reports', conn, if_exists='append', index=False)
         conn.close()
         return True
@@ -83,7 +88,7 @@ def save_to_history_db(df_report):
         return False
 
 def run_grand_unification(uploaded_csvs):
-    st.info("⚙️ 中央大腦啟動：正在清洗資料並過濾雜訊...")
+    st.info("⚙️ 中央大腦啟動：正在清洗資料並過濾雜訊 (上市/上櫃雙引擎)...")
     df_clean = process_raw_csvs(uploaded_csvs)
     if df_clean.empty:
         st.error("❌ 資料清洗失敗，請確認 CSV 格式。")
