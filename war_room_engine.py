@@ -7,7 +7,6 @@ import sqlite3
 import requests
 from datetime import datetime
 
-# 🎭 偽裝瀏覽器
 session = requests.Session()
 session.headers.update({'User-Agent': 'Mozilla/5.0'})
 
@@ -75,7 +74,8 @@ def save_to_history_db(df_report):
         conn = sqlite3.connect('broker_memory.db')
         today_str = datetime.now().strftime("%Y-%m-%d")
         df_report['日期'] = today_str
-        df_report.to_sql('daily_war_reports', conn, if_exists='append', index=False)
+        # 🛡️ 更改表格名稱為 v34_war_reports，避開舊表格的 Schema 衝突
+        df_report.to_sql('v34_war_reports', conn, if_exists='append', index=False)
         conn.close()
         return True
     except Exception as e:
@@ -87,12 +87,10 @@ def run_grand_unification(uploaded_csvs):
     df_clean = process_raw_csvs(uploaded_csvs)
     if df_clean.empty:
         st.error("❌ 資料清洗失敗，請確認 CSV 格式。")
-        return
+        return None
         
-    # 抓取大盤基準
     twii = yf.Ticker("^TWII", session=session).history(period="5d")
     twii_pct = (twii['Close'].iloc[-1] - twii['Close'].iloc[-2]) / twii['Close'].iloc[-2] * 100
-    st.info(f"📈 今日大盤基準漲跌幅：{twii_pct:.2f}%")
     
     report_data = []
     my_bar = st.progress(0, text="🌐 正在進行 V33 嚴格積分運算...")
@@ -107,7 +105,6 @@ def run_grand_unification(uploaded_csvs):
             net_buy = row['買賣超']
             vol_5d = market_data['volume_5d']
             
-            # 1. 籌碼集中度積分
             concentration = (net_buy / vol_5d) * 100
             if concentration > 15: score_c = 40
             elif concentration > 10: score_c = 30
@@ -115,7 +112,6 @@ def run_grand_unification(uploaded_csvs):
             elif concentration > 2: score_c = 10
             else: score_c = 0
             
-            # 2. 相對抗跌積分
             pct_change = (market_data['close'] - market_data['prev_close']) / market_data['prev_close'] * 100
             rs = pct_change - twii_pct
             if rs > 3: score_rs = 30
@@ -123,7 +119,6 @@ def run_grand_unification(uploaded_csvs):
             elif rs > -1: score_rs = 10
             else: score_rs = 0
             
-            # 3. 洗盤型態積分 (下影線)
             total_range = market_data['high'] - market_data['low']
             lower_shadow = min(market_data['open'], market_data['close']) - market_data['low']
             shadow_ratio = lower_shadow / total_range if total_range > 0 else 0
@@ -134,7 +129,6 @@ def run_grand_unification(uploaded_csvs):
             
             total_score = score_c + score_rs + score_p
             
-            # 嚴格濾網：總分必須 >= 70 才放行
             if total_score >= 85: rating = "👑 S級真龍"
             elif total_score >= 70: rating = "🦅 A級潛龍"
             else: rating = "淘汰"
@@ -158,10 +152,7 @@ def run_grand_unification(uploaded_csvs):
     
     if not df_report.empty:
         df_report = df_report.sort_values(by=['總分', '集中度(%)'], ascending=[False, False]).reset_index(drop=True)
-        st.success(f"🎯 嚴格篩選完畢！從 {len(df_clean)} 檔中淬鍊出 {len(df_report)} 檔 S/A 級菁英！")
-        st.dataframe(df_report, use_container_width=True)
-        
-        if save_to_history_db(df_report):
-            st.toast("💾 戰報已自動備份至歷史記憶庫！")
+        save_to_history_db(df_report)
+        return df_report
     else:
-        st.warning("⚠️ 今日無任何個股達到 70 分以上的真龍標準。請保持空手！")
+        return pd.DataFrame()
