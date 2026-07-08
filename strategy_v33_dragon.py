@@ -19,7 +19,6 @@ def fetch_stock_data(ticker):
         if not hist.empty and len(hist) >= 2:
             prev_close = hist['Close'].iloc[-2]
             today = hist.iloc[-1]
-            # 🎯 關鍵修正：計算 5 天的「總成交量」
             vol_5d_sum = hist['Volume'].sum() / 1000 
             return {
                 'ticker': ticker,
@@ -28,7 +27,7 @@ def fetch_stock_data(ticker):
                 'low': today['Low'],
                 'close': today['Close'],
                 'volume_today': today['Volume'] / 1000, 
-                'volume_5d': vol_5d_sum, # 5日總量
+                'volume_5d': vol_5d_sum, 
                 'prev_close': prev_close
             }
     except Exception: pass
@@ -56,10 +55,9 @@ def run_v33_scoring(df_aggregated, twii_pct):
             vol_today = market_data['volume_today']
             vol_5d = market_data['volume_5d']
             
-            # 🎯 濾網 1：剔除今日成交量 < 500 張的冷門股
             if vol_today < 500 or net_buy <= 0 or vol_5d <= 0: continue 
             
-            # 🎯 維度一：波段籌碼集中度 (滿分 40 分) -> 改用 5日買超 / 5日總量
+            # 🎯 維度一：波段籌碼集中度 (滿分 40 分)
             concentration = (net_buy / vol_5d) * 100
             if concentration > 15: score_c = 40
             elif concentration > 10: score_c = 30
@@ -90,7 +88,6 @@ def run_v33_scoring(df_aggregated, twii_pct):
             elif total_score >= 70: rating = "🦅 A級潛龍"
             else: rating = "淘汰"
             
-            # 🎯 濾網 2：只顯示 70 分以上的菁英
             if total_score >= 70:
                 results.append({
                     '評級': rating,
@@ -149,7 +146,9 @@ def render_v33_ui(uploaded_csvs):
                 
             df_all = df_all.rename(columns={id_col: '代號', name_col: '名稱', buy_col: '買賣超'})
             df_all['代號'] = df_all['代號'].astype(str).str.replace('=', '').str.replace('"', '').str.strip()
-            df_all['買賣超'] = df_all['買賣超'].apply(clean_numeric)
+            
+            # 🎯 關鍵修正：將 CSV 的「股」除以 1000 轉換為「張」
+            df_all['買賣超'] = df_all['買賣超'].apply(clean_numeric) / 1000
             
             df_agg = df_all.groupby(['代號', '名稱'])['買賣超'].sum().reset_index()
             df_agg = df_agg[df_agg['買賣超'] > 0] 
