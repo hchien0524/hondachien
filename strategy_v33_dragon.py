@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import concurrent.futures
-import time
+import io
 
 def clean_numeric(val):
     """清理 CSV 中的數字格式 (去除逗號)"""
@@ -125,16 +125,19 @@ def render_v33_ui(uploaded_csvs):
         
     if st.button("🚀 啟動 V33 真龍積分運算", type="primary"):
         try:
-            # 1. 讀取並合併所有 CSV (加入 Big5 雙語翻譯機)
+            # 1. 讀取並合併所有 CSV (100% 防彈底層解碼器)
             df_list = []
             for file in uploaded_csvs:
                 try:
                     # 先嘗試國際標準 UTF-8
                     df_temp = pd.read_csv(file, encoding='utf-8')
                 except UnicodeDecodeError:
-                    # 若報錯，切換為台灣本土 Big5 編碼
-                    file.seek(0) # 將檔案指標移回開頭
-                    df_temp = pd.read_csv(file, encoding='big5', errors='ignore')
+                    # 若報錯，使用 Python 底層強制解碼 (無視亂碼)
+                    file.seek(0)
+                    raw_data = file.read()
+                    # 將 bytes 強制用 cp950 (台灣 Windows 預設) 解碼，遇到無法辨識的字元直接忽略
+                    decoded_content = raw_data.decode('cp950', errors='ignore')
+                    df_temp = pd.read_csv(io.StringIO(decoded_content))
                 df_list.append(df_temp)
                 
             df_all = pd.concat(df_list, ignore_index=True)
