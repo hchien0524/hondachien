@@ -150,7 +150,7 @@ def main():
             if war_room_engine:
                 st.title("🔥 V34 總司令終極戰報")
                 war_room_engine.run_grand_unification(uploaded_csvs)
-                st.stop() # 🛑 停止渲染下方舊版分頁，讓總司令專注於終極戰報！
+                st.divider() # 🛑 解除封印！畫一條分隔線，下方繼續顯示其他模組
             else:
                 st.sidebar.error("找不到 `war_room_engine.py` 模組！請確認檔案已建立。")
                 
