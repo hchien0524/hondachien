@@ -1,16 +1,15 @@
 import streamlit as st
 import pandas as pd
-import requests
-from bs4 import BeautifulSoup
 import re
-import time
+import sqlite3
+from datetime import datetime
 
 def render_sniper_module():
-    st.header("🎯 主力 X 光狙擊室 (全自動聯網版)")
-    st.markdown("已連接全球戰情網，可全自動抓取 Yahoo 股市主力進出明細。")
+    st.header("🎯 主力 X 光狙擊室")
+    st.markdown("支援解析 **Yahoo 股市格式** 與 **券商軟體格式**，並可一鍵寫入歷史記憶庫。")
     
     # ==========================================
-    # 🎯 自動填彈系統：強制綁定 Session State
+    # 🎯 自動填彈系統
     # ==========================================
     if 'target_id' not in st.session_state:
         st.session_state['target_id'] = ""
@@ -23,98 +22,81 @@ def render_sniper_module():
         st.info("💡 提示：在【🔥 終極戰報】點擊「一鍵上膛」後，代號會自動填入此處。")
 
     # ==========================================
-    # 🧠 核心解析引擎 (共用邏輯)
+    # 📥 數據輸入區
     # ==========================================
-    def parse_broker_data(lines):
-        parsed_data = []
-        for line in lines:
-            # 將多個空白壓縮成單一空白
-            parts = re.split(r'\s+', line.strip())
-            if len(parts) >= 4:
-                try:
-                    net = int(parts[-1].replace(',', ''))
-                    sell = int(parts[-2].replace(',', ''))
-                    buy = int(parts[-3].replace(',', ''))
-                    broker_name = " ".join(parts[:-3])
-                    broker_name = re.sub(r'^\d+\s+', '', broker_name)
-                    
-                    # 過濾掉表頭雜訊
-                    if "券商" in broker_name or "買進" in broker_name or "賣出" in broker_name: 
-                        continue
-                        
-                    parsed_data.append({
-                        "分點名稱": broker_name,
-                        "買進(張)": buy,
-                        "賣出(張)": sell,
-                        "買賣超(張)": net
-                    })
-                except ValueError:
-                    continue
-        return parsed_data
-
-    # ==========================================
-    # 🌐 全自動聯網狙擊 (Yahoo 爬蟲)
-    # ==========================================
-    if st.button("🌐 自動聯網狙擊 (抓取 Yahoo 主力籌碼)", type="primary", use_container_width=True):
-        if not stock_id:
-            st.warning("⚠️ 請先輸入或上膛股票代號！")
-            return
-            
-        with st.spinner(f"正在潛入 Yahoo 戰情網抓取 {stock_id} 主力數據..."):
-            try:
-                # 建立多重 URL 測試 (上市 .TW / 上櫃 .TWO)
-                urls = [
-                    f"https://tw.stock.yahoo.com/quote/{stock_id}.TW/broker-trading",
-                    f"https://tw.stock.yahoo.com/quote/{stock_id}.TWO/broker-trading",
-                    f"https://tw.stock.yahoo.com/quote/{stock_id}/broker-trading"
-                ]
-                
-                headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64 ) AppleWebKit/537.36'}
-                html_content = ""
-                
-                # 尋找有效的網頁回應
-                for url in urls:
-                    res = requests.get(url, headers=headers, timeout=5)
-                    if res.status_code == 200:
-                        html_content = res.text
-                        break
-                
-                if html_content:
-                    soup = BeautifulSoup(html_content, 'html.parser')
-                    # Yahoo 的表格通常是用 li 標籤包裝，我們把 li 裡面的文字用空白隔開萃取出來
-                    lines = [li.get_text(separator=' ') for li in soup.find_all('li')]
-                    parsed_data = parse_broker_data(lines)
-                    
-                    if parsed_data:
-                        st.session_state['sniper_data'] = parsed_data
-                        st.success(f"✅ 成功從 Yahoo 自動抓取 【{stock_id}】 的主力陣型！")
-                    else:
-                        st.error("❌ 自動抓取失敗：Yahoo 網頁結構可能改變，或該檔股票今日無數據。")
-                else:
-                    st.error("❌ 無法連線至 Yahoo 股市，請稍後再試。")
-            except Exception as e:
-                st.error(f"🌐 網路連線異常: {e}")
-
-    st.divider()
+    raw_data = st.text_area(
+        "📥 請貼上主力分點買賣超數據 (支援 Yahoo 網頁複製 或 券商軟體複製)：", 
+        height=200,
+        placeholder="請直接貼上從 Yahoo 股市或券商軟體複製的數據..."
+    )
     
     # ==========================================
-    # 📥 手動備用彈匣 (防禦 Yahoo 封鎖 IP)
+    # 🔫 雙引擎解析邏輯
     # ==========================================
-    with st.expander("📥 手動備用彈匣 (若自動抓取失敗，請展開此處貼上數據)"):
-        st.markdown(f"👉 [點我手動前往 Yahoo {stock_id} 籌碼頁面](https://tw.stock.yahoo.com/quote/{stock_id}/broker-trading )")
-        raw_data = st.text_area("請貼上主力分點買賣超數據：", height=150)
-        if st.button("🔫 手動解析數據"):
-            if raw_data.strip():
-                lines = raw_data.strip().split('\n')
-                parsed_data = parse_broker_data(lines)
-                if parsed_data:
-                    st.session_state['sniper_data'] = parsed_data
-                    st.success("✅ 手動解析成功！")
-                else:
-                    st.error("❌ 解析失敗，請確認格式。")
+    if st.button("🔫 啟動 X 光掃描", type="primary", use_container_width=True):
+        if not stock_id:
+            st.warning("⚠️ 請先輸入股票代號！")
+            return
+        if not raw_data.strip():
+            st.warning("⚠️ 請貼上籌碼數據！")
+            return
+            
+        with st.spinner("正在解碼主力籌碼陣型..."):
+            parsed_data = []
+            # 清理空白行
+            lines = [line.strip() for line in raw_data.strip().split('\n') if line.strip()]
+            
+            # 判斷是否為 Yahoo 格式 (特徵：包含特定表頭)
+            is_yahoo_format = any("買超券商" in line or "賣超券商" in line for line in lines)
+            
+            if is_yahoo_format:
+                # 🛡️ 引擎 A：Yahoo 垂直格式解析
+                headers = {"買超券商", "買進", "賣出", "買超張數", "賣超券商", "賣超張數"}
+                filtered_lines = [line for line in lines if line not in headers]
+                
+                # 每 4 行為一筆資料 (券商名稱, 買進, 賣出, 買賣超)
+                for i in range(0, len(filtered_lines) - 3, 4):
+                    broker = filtered_lines[i]
+                    try:
+                        buy = int(filtered_lines[i+1].replace(',', ''))
+                        sell = int(filtered_lines[i+2].replace(',', ''))
+                        net = int(filtered_lines[i+3].replace(',', ''))
+                        parsed_data.append({
+                            "分點名稱": broker,
+                            "買進(張)": buy,
+                            "賣出(張)": sell,
+                            "買賣超(張)": net
+                        })
+                    except ValueError:
+                        continue
+            else:
+                # 🛡️ 引擎 B：券商軟體水平格式解析
+                for line in lines:
+                    parts = re.split(r'\s+', line)
+                    if len(parts) >= 4:
+                        try:
+                            net = int(parts[-1].replace(',', ''))
+                            sell = int(parts[-2].replace(',', ''))
+                            buy = int(parts[-3].replace(',', ''))
+                            broker_name = " ".join(parts[:-3])
+                            broker_name = re.sub(r'^\d+\s+', '', broker_name)
+                            parsed_data.append({
+                                "分點名稱": broker_name,
+                                "買進(張)": buy,
+                                "賣出(張)": sell,
+                                "買賣超(張)": net
+                            })
+                        except ValueError:
+                            continue
+            
+            if parsed_data:
+                st.session_state['sniper_data'] = parsed_data
+                st.success(f"✅ 成功解碼 【{stock_id}】 的主力陣型！")
+            else:
+                st.error("❌ 數據解析失敗，請確認貼上的數據格式。")
 
     # ==========================================
-    # 📊 顯示戰情速報與表格
+    # 📊 顯示結果與寫入記憶庫
     # ==========================================
     if 'sniper_data' in st.session_state and st.session_state['sniper_data']:
         df = pd.DataFrame(st.session_state['sniper_data'])
@@ -138,5 +120,52 @@ def render_sniper_module():
             else:
                 st.metric("⚠️ 最大倒貨主力", "無", "0 張")
                 
-        # 顯示完整數據表格
         st.dataframe(df, use_container_width=True)
+        
+        # ==========================================
+        # 💾 一鍵寫入歷史記憶庫 (broker_memory)
+        # ==========================================
+        st.divider()
+        if st.button("💾 將此陣型寫入歷史記憶庫", type="primary"):
+            try:
+                conn = sqlite3.connect('broker_memory.db')
+                cursor = conn.cursor()
+                
+                # 確保資料表存在
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS broker_records (
+                        record_date TEXT,
+                        stock_id TEXT,
+                        broker_name TEXT,
+                        buy_vol INTEGER,
+                        sell_vol INTEGER,
+                        net_vol INTEGER,
+                        PRIMARY KEY (record_date, stock_id, broker_name)
+                    )
+                ''')
+                
+                today_str = datetime.now().strftime("%Y-%m-%d")
+                records = []
+                for _, row in df.iterrows():
+                    records.append((
+                        today_str,
+                        stock_id,
+                        row['分點名稱'],
+                        row['買進(張)'],
+                        row['賣出(張)'],
+                        row['買賣超(張)']
+                    ))
+                
+                # 寫入資料庫 (若重複則更新)
+                cursor.executemany('''
+                    INSERT INTO broker_records (record_date, stock_id, broker_name, buy_vol, sell_vol, net_vol)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(record_date, stock_id, broker_name) 
+                    DO UPDATE SET buy_vol=excluded.buy_vol, sell_vol=excluded.sell_vol, net_vol=excluded.net_vol
+                ''', records)
+                
+                conn.commit()
+                conn.close()
+                st.success(f"✅ 已成功將 {stock_id} 的主力陣型寫入 `broker_memory.db`！您可至【🗄️ 歷史記憶庫】調閱。")
+            except Exception as e:
+                st.error(f"寫入資料庫失敗: {e}")
