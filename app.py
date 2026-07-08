@@ -6,6 +6,9 @@ import io
 import os
 import sqlite3
 
+# ==========================================
+# 🛡️ 模組安全掛載區 (動態載入，防崩潰機制)
+# ==========================================
 try: import strategy_core
 except ImportError: strategy_core = None
 try: import strategy_stealth
@@ -96,7 +99,6 @@ def main():
                 with st.spinner("戰情中心高速運算中..."):
                     report_df = war_room_engine.run_grand_unification(uploaded_csvs)
                     if report_df is not None and not report_df.empty:
-                        # 🛡️ 將戰報存入 Session State，確保切換分頁時不會消失
                         st.session_state['v34_report'] = report_df
                         st.sidebar.success("✅ 戰報生成完畢！請查看右側【🔥 終極戰報】分頁。")
             else:
@@ -111,11 +113,18 @@ def main():
     st.sidebar.download_button(label="📥 下載系統備份檔 (ZIP)", data=create_backup_zip(), file_name="Hios_Backup.zip", mime="application/zip", use_container_width=True)
                 
     # ==========================================
-    # 🚀 主戰情室 (新增 Tab0 專屬戰報區)
+    # 🚀 主戰情室 (完美對齊的 9 大分頁)
     # ==========================================
-    tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-        "🔥 終極戰報", "🌐 總體風控", "🚀 雷達掃描", "🛡️ 持股監控", 
-        "🎯 主力 X 光狙擊", "🗄️ 歷史記憶庫", "🛡️ 戰略預備隊", "👑 V33 真龍雷達"
+    tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+        "🔥 終極戰報", 
+        "🌐 總體風控", 
+        "🚀 雷達掃描", 
+        "🛡️ 持股監控", 
+        "⏳ 時光膠囊", 
+        "🎯 主力 X 光狙擊", 
+        "🗄️ 歷史記憶庫", 
+        "🛡️ 戰略預備隊", 
+        "👑 V33 真龍雷達"
     ])
     
     with tab0:
@@ -142,6 +151,8 @@ def main():
         if broker_memory: broker_memory.render_memory_dashboard()
     with tab7:
         render_strategic_benchmarks_ui()
+    with tab8:
+        if strategy_v33_dragon: strategy_v33_dragon.render_v33_ui(uploaded_csvs)
 
 if __name__ == "__main__":
     main()
