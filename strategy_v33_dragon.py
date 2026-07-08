@@ -5,16 +5,12 @@ import concurrent.futures
 import io
 
 def clean_numeric(val):
-    """清理 CSV 中的數字格式 (去除逗號)"""
     if isinstance(val, str):
         val = val.replace(',', '').strip()
-    try:
-        return float(val)
-    except:
-        return 0.0
+    try: return float(val)
+    except: return 0.0
 
 def fetch_stock_data(ticker):
-    """透過 yfinance 抓取個股 K 線數據 (支援上市與上櫃)"""
     try:
         hist = yf.Ticker(f"{ticker}.TW").history(period="5d")
         if hist.empty:
@@ -23,23 +19,23 @@ def fetch_stock_data(ticker):
         if not hist.empty and len(hist) >= 2:
             prev_close = hist['Close'].iloc[-2]
             today = hist.iloc[-1]
+            # 🎯 關鍵修正：計算 5 天的「總成交量」
+            vol_5d_sum = hist['Volume'].sum() / 1000 
             return {
                 'ticker': ticker,
                 'open': today['Open'],
                 'high': today['High'],
                 'low': today['Low'],
                 'close': today['Close'],
-                'volume': today['Volume'] / 1000, 
+                'volume_today': today['Volume'] / 1000, 
+                'volume_5d': vol_5d_sum, # 5日總量
                 'prev_close': prev_close
             }
-    except Exception:
-        pass
+    except Exception: pass
     return None
 
 def run_v33_scoring(df_aggregated, twii_pct):
-    """執行 V33 三位一體動態積分運算"""
     results = []
-    
     progress_text = "🌐 V33 聯網雷達掃描中，請稍候..."
     my_bar = st.progress(0, text=progress_text)
     total_stocks = len(df_aggregated)
@@ -57,11 +53,14 @@ def run_v33_scoring(df_aggregated, twii_pct):
             if not market_data: continue
             
             net_buy = row['買賣超']
-            vol = market_data['volume']
-            if vol <= 0 or net_buy <= 0: continue 
+            vol_today = market_data['volume_today']
+            vol_5d = market_data['volume_5d']
             
-            # 🎯 維度一：籌碼集中度 (滿分 40 分)
-            concentration = (net_buy / vol) * 100
+            # 🎯 濾網 1：剔除今日成交量 < 500 張的冷門股
+            if vol_today < 500 or net_buy <= 0 or vol_5d <= 0: continue 
+            
+            # 🎯 維度一：波段籌碼集中度 (滿分 40 分) -> 改用 5日買超 / 5日總量
+            concentration = (net_buy / vol_5d) * 100
             if concentration > 15: score_c = 40
             elif concentration > 10: score_c = 30
             elif concentration > 5: score_c = 20
@@ -86,23 +85,21 @@ def run_v33_scoring(df_aggregated, twii_pct):
             elif shadow_ratio > 0.2: score_p = 10
             else: score_p = 0
             
-            # --- 總分與評級 ---
             total_score = score_c + score_rs + score_p
             if total_score >= 85: rating = "👑 S級真龍"
             elif total_score >= 70: rating = "🦅 A級潛龍"
-            elif total_score >= 50: rating = "🛡️ B級觀察"
             else: rating = "淘汰"
             
-            if total_score >= 50:
+            # 🎯 濾網 2：只顯示 70 分以上的菁英
+            if total_score >= 70:
                 results.append({
                     '評級': rating,
                     '總分': total_score,
                     '代號': str(row['代號']),
                     '名稱': row['名稱'],
-                    '波段買超(張)': int(net_buy),
-                    '今日成交(張)': int(vol),
-                    '集中度(%)': round(concentration, 2),
-                    '漲跌幅(%)': round(pct_change, 2),
+                    '5日買超(張)': int(net_buy),
+                    '5日集中度(%)': round(concentration, 2),
+                    '今日漲跌(%)': round(pct_change, 2),
                     '下影線比例': round(shadow_ratio, 2),
                     '籌碼分': score_c,
                     '抗跌分': score_rs,
@@ -113,9 +110,8 @@ def run_v33_scoring(df_aggregated, twii_pct):
     return pd.DataFrame(results)
 
 def render_v33_ui(uploaded_csvs):
-    """渲染 V33 真龍雷達 UI"""
     st.header("👑 V33 真龍動態積分雷達 (3D 照妖鏡)")
-    st.markdown("融合 **「籌碼集中度 + 相對抗跌係數 + 洗盤型態」**，從波段數據中精準抓出主力鎖碼的 S 級真龍！")
+    st.markdown("融合 **「波段集中度 + 相對抗跌係數 + 洗盤型態」**，從波段數據中精準抓出主力鎖碼的 S 級真龍！")
     
     if not uploaded_csvs:
         st.info("👈 請先從左側邊欄上傳 3~5 天的「法人買賣超 CSV」以啟動雷達。")
@@ -127,14 +123,9 @@ def render_v33_ui(uploaded_csvs):
             for file in uploaded_csvs:
                 file.seek(0)
                 raw_data = file.read()
+                try: decoded_content = raw_data.decode('utf-8')
+                except UnicodeDecodeError: decoded_content = raw_data.decode('cp950', errors='ignore')
                 
-                # 1. 雙語解碼
-                try:
-                    decoded_content = raw_data.decode('utf-8')
-                except UnicodeDecodeError:
-                    decoded_content = raw_data.decode('cp950', errors='ignore')
-                
-                # 2. 自動尋找真實的欄位標題行 (跳過官方的幽靈標題)
                 lines = decoded_content.splitlines()
                 header_idx = 0
                 for i, line in enumerate(lines):
@@ -142,14 +133,12 @@ def render_v33_ui(uploaded_csvs):
                         header_idx = i
                         break
                 
-                # 3. 從真實標題行開始讀取
                 df_temp = pd.read_csv(io.StringIO(decoded_content), skiprows=header_idx)
                 df_temp.columns = df_temp.columns.str.strip().str.replace('"', '')
                 df_list.append(df_temp)
                 
             df_all = pd.concat(df_list, ignore_index=True)
             
-            # 4. AI 動態欄位追蹤
             id_col = next((col for col in df_all.columns if '代號' in col or '代碼' in col), None)
             name_col = next((col for col in df_all.columns if '名稱' in col), None)
             buy_col = next((col for col in df_all.columns if '買賣超' in col), None)
@@ -162,28 +151,24 @@ def render_v33_ui(uploaded_csvs):
             df_all['代號'] = df_all['代號'].astype(str).str.replace('=', '').str.replace('"', '').str.strip()
             df_all['買賣超'] = df_all['買賣超'].apply(clean_numeric)
             
-            # 5. 群組加總
             df_agg = df_all.groupby(['代號', '名稱'])['買賣超'].sum().reset_index()
             df_agg = df_agg[df_agg['買賣超'] > 0] 
             
             st.success(f"✅ 成功融合 {len(uploaded_csvs)} 份 CSV，共篩選出 {len(df_agg)} 檔波段買超標的，準備聯網分析...")
             
-            # 6. 抓取大盤基準
             twii = yf.Ticker("^TWII").history(period="5d")
             twii_pct = (twii['Close'].iloc[-1] - twii['Close'].iloc[-2]) / twii['Close'].iloc[-2] * 100
             st.info(f"📈 今日大盤基準漲跌幅：{twii_pct:.2f}%")
             
-            # 7. 執行 V33 核心運算
             df_result = run_v33_scoring(df_agg, twii_pct)
             
-            # 8. 顯示結果
             if not df_result.empty:
                 df_result = df_result.sort_values(by='總分', ascending=False).reset_index(drop=True)
                 st.balloons()
-                st.subheader(f"🎯 掃描完成！共發現 {len(df_result)} 檔潛力標的")
+                st.subheader(f"🎯 掃描完成！經過嚴格篩選，僅存 {len(df_result)} 檔 S/A 級菁英")
                 st.dataframe(df_result, use_container_width=True)
             else:
-                st.warning("⚠️ 掃描完成，但今日無任何標的符合 V33 真龍標準 (總分 < 50)。請保持空手或觀察避險金庫！")
+                st.warning("⚠️ 掃描完成，今日無任何標的達到 70 分以上的真龍標準。請保持空手！")
                 
         except Exception as e:
             st.error(f"運算過程中發生錯誤: {e}")
