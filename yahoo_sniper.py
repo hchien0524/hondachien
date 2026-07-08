@@ -7,14 +7,16 @@ def render_sniper_module():
     st.markdown("請從戰情中心將目標「一鍵上膛」，並貼上籌碼明細進行 X 光解碼。")
     
     # ==========================================
-    # 🎯 自動填彈系統：讀取中央大腦傳遞過來的目標
+    # 🎯 自動填彈系統：強制綁定 Session State (解決 Streamlit 緩存 Bug)
     # ==========================================
-    default_target = st.session_state.get('target_id', '')
-    
+    # 確保中央大腦裡有這個變數，避免報錯
+    if 'target_id' not in st.session_state:
+        st.session_state['target_id'] = ""
+        
     col1, col2 = st.columns([1, 2])
     with col1:
-        # 這裡的 value=default_target 就是自動填入的關鍵！
-        stock_id = st.text_input("🎯 狙擊目標 (股票代號)", value=default_target)
+        # 🛡️ 終極修復：使用 key="target_id" 直接綁定中央大腦，絕對不會再漏接！
+        stock_id = st.text_input("🎯 狙擊目標 (股票代號)", key="target_id")
     
     with col2:
         st.info("💡 提示：在【🔥 終極戰報】點擊「一鍵上膛」後，代號會自動填入此處。")
