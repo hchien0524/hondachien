@@ -1,303 +1,228 @@
 import streamlit as st
 import pandas as pd
-import yfinance as yf
 import numpy as np
-import io
-
-try:
-    from sector_dict import STOCK_SECTOR
-except ImportError:
-    STOCK_SECTOR = {}
-
-def load_and_clean_csv(file):
-    encodings = ['big5-hkscs', 'cp950', 'utf-8', 'utf-8-sig']
-    file_bytes = file.getvalue() 
-    for enc in encodings:
-        try:
-            text = file_bytes.decode(enc)
-            lines = text.split('\n')
-            header_idx = -1
-            for i, line in enumerate(lines[:15]):
-                if '代號' in line or '證券代號' in line:
-                    header_idx = i
-                    break
-            if header_idx != -1:
-                csv_data = '\n'.join(lines[header_idx:])
-                df = pd.read_csv(io.StringIO(csv_data), dtype=str, skipinitialspace=True)
-                df.columns = df.columns.str.strip().str.replace('"', '').str.replace(' ', '')
-                return df
-        except:
-            continue
-    return None
-
-def find_column(df, keywords):
-    for col in df.columns:
-        for kw in keywords:
-            if kw in str(col):
-                return col
-    return None
-
-def add_targets_to_portfolio(selected_codes, default_cost, df):
-    if 'portfolio' not in st.session_state:
-        st.session_state['portfolio'] = []
-    for code in selected_codes:
-        name = df[df['代號']==code]['名稱'].values[0]
-        existing = next((item for item in st.session_state['portfolio'] if item.get("代號") == code), None)
-        if existing:
-            existing["成本價"] = default_cost 
-        else:
-            st.session_state['portfolio'].append({
-                "代號": code, "名稱": name, "成本價": default_cost
-            })
+import yfinance as yf
+import time
+from datetime import datetime
 
 def run_radar(uploaded_csvs, filter_bias_max, filter_resonance, filter_vol_min):
-    st.markdown("### 🧠 V29.6 終極雙腦評分雷達 (純淨鐵門版)")
+    st.subheader("👑 V35 終極勝率版：真龍雷達掃描")
     
-    if st.button("🚀 啟動雷達掃描", type="primary"):
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        status_text.text("⏳ [1/3] 執行 CSV 內部迴圈：解析所有法人籌碼...")
-        
+    if not uploaded_csvs or len(uploaded_csvs) < 2:
+        st.warning("⚠️ V35 引擎需要計算「點火加速度」，請至少上傳 2 天以上的 CSV (建議 5 天)。")
+        return
+
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    try:
+        # ==========================================
+        # 📂 步驟一：解析並融合多日 CSV 數據
+        # ==========================================
+        status_text.text("📂 正在解析多日法人籌碼數據...")
         all_data = []
+        
         for file in uploaded_csvs:
-            df = load_and_clean_csv(file)
-            if df is None: continue
-            col_code = find_column(df, ['證券代號', '代號', 'Code'])
-            col_name = find_column(df, ['證券名稱', '名稱', 'Name'])
-            col_trust = find_column(df, ['投信買賣超', '投信-買賣超', '投信買超', '投信買賣超股數'])
+            # 讀取 CSV，嘗試不同編碼
+            try:
+                df = pd.read_csv(file, encoding='utf-8-sig')
+            except:
+                try:
+                    file.seek(0)
+                    df = pd.read_csv(file, encoding='cp950')
+                except:
+                    continue
             
-            if col_code and col_trust:
-                df[col_code] = df[col_code].astype(str).str.replace('=', '').str.replace('"', '').str.strip()
+            # 尋找關鍵欄位
+            col_code = next((c for c in df.columns if '代號' in c or '代碼' in c), None)
+            col_name = next((c for c in df.columns if '名稱' in c), None)
+            col_foreign = next((c for c in df.columns if '外陸資買賣超' in c and '不含' in c), None)
+            col_trust = next((c for c in df.columns if '投信買賣超' in c), None)
+            col_dealer = next((c for c in df.columns if '自營商買賣超' in c and '自行' not in c and '避險' not in c), None)
+            
+            if not all([col_code, col_name, col_foreign, col_trust]):
+                continue
                 
-                # ==========================================
-                # 🛡️ 絕對鐵門：只保留 4 碼純數字的普通股 (排除 0 開頭的 ETF 與權證)
-                # ==========================================
-                df = df[df[col_code].str.match(r'^[1-9]\d{3}$', na=False)]
-                
-                df[col_trust] = pd.to_numeric(df[col_trust].astype(str).str.replace(',', ''), errors='coerce').fillna(0) / 1000.0
-                temp_df = df[[col_code, col_name, col_trust]].copy()
-                temp_df.columns = ['代號', '名稱', '投信買賣超']
-                all_data.append(temp_df)
-                
+            # 清理資料 (排除權證、ETF，代號長度為 4 的純股票)
+            df[col_code] = df[col_code].astype(str).str.strip()
+            df = df[df[col_code].str.len() == 4]
+            df = df[df[col_code].str.isnumeric()]
+            
+            # 轉換為張數 (除以 1000)
+            for col in [col_foreign, col_trust, col_dealer]:
+                if col and col in df.columns:
+                    df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0) / 1000
+            
+            # 統一欄位名稱
+            df_clean = pd.DataFrame({
+                '代號': df[col_code],
+                '名稱': df[col_name],
+                '外資買賣超': df[col_foreign],
+                '投信買賣超': df[col_trust],
+                '自營商買賣超': df[col_dealer] if col_dealer else 0
+            })
+            
+            # 加上檔案日期標籤 (假設檔名包含日期，或依上傳順序)
+            df_clean['File_Index'] = uploaded_csvs.index(file)
+            all_data.append(df_clean)
+            
         if not all_data:
-            st.error("❌ CSV 解析失敗：找不到『代號』或『投信買賣超』欄位，或檔案中無符合條件的個股。")
+            st.error("❌ 無法解析 CSV，請確認是否為證交所/櫃買中心下載的「三大法人買賣超日報」。")
             return
             
-        merged_df = pd.concat(all_data)
-        merged_df['買超天數'] = (merged_df['投信買賣超'] > 0).astype(int)
-        summary_df = merged_df.groupby(['代號', '名稱']).agg(
-            總買超=('投信買賣超', 'sum'), 連買天數=('買超天數', 'sum')
-        ).reset_index()
-
-        top_candidates = summary_df[summary_df['總買超'] > 0].copy()
-        top_candidates['所屬族群'] = top_candidates['代號'].map(lambda x: STOCK_SECTOR.get(x, "其他/未分類"))
-        sector_counts = top_candidates[top_candidates['所屬族群'] != "其他/未分類"]['所屬族群'].value_counts()
+        # 合併所有資料
+        df_all = pd.concat(all_data, ignore_index=True)
         
-        total_csv_stocks = len(top_candidates)
-        progress_bar.progress(20)
-        status_text.text(f"⏳ [2/3] 啟動 YFinance 引擎：檢驗 {total_csv_stocks} 檔純淨標的...")
+        # ==========================================
+        # 🔥 步驟二：V35 核心邏輯 (點火加速度 & 護城河)
+        # ==========================================
+        status_text.text("🔥 正在計算籌碼點火加速度與鎖碼護城河...")
+        progress_bar.progress(30)
         
-        results = []
-        stats = {"yf_fail": 0, "vol_fail": 0, "ma60_fail": 0, "bias_max_fail": 0, "reso_fail": 0}
+        # 分離 Day 0 (最新一日) 與 Day 1~4 (過去幾日)
+        # 假設 File_Index 0 是最新的一天
+        df_day0 = df_all[df_all['File_Index'] == 0].groupby('代號').sum().reset_index()
+        df_past = df_all[df_all['File_Index'] > 0].groupby('代號').sum().reset_index()
         
-        for i, (idx, row) in enumerate(top_candidates.iterrows()):
+        # 計算過去平均 (除以過去的天數)
+        past_days_count = len(uploaded_csvs) - 1
+        if past_days_count > 0:
+            df_past['外資買賣超'] = df_past['外資買賣超'] / past_days_count
+            df_past['投信買賣超'] = df_past['投信買賣超'] / past_days_count
+            
+        # 準備篩選結果
+        candidates = []
+        
+        for _, row0 in df_day0.iterrows():
+            code = row0['代號']
+            name = row0['名稱']
+            
+            # Day 0 數據
+            d0_foreign = row0['外資買賣超']
+            d0_trust = row0['投信買賣超']
+            d0_dealer = row0['自營商買賣超']
+            d0_main_force = d0_foreign + d0_trust # 波段主力 (白名單)
+            
+            # 過去數據
+            past_row = df_past[df_past['代號'] == code]
+            if not past_row.empty:
+                past_main_force = past_row.iloc[0]['外資買賣超'] + past_row.iloc[0]['投信買賣超']
+            else:
+                past_main_force = 0
+                
+            # ------------------------------------------------
+            # 🛡️ 濾網 1：鎖碼護城河比例 (波段主力 > 1.5倍 自營商)
+            # ------------------------------------------------
+            if d0_main_force <= 0: continue # 主力沒買，淘汰
+            if d0_dealer > 0 and d0_main_force < (d0_dealer * 1.5): continue # 隔日沖/短線比例過高，淘汰
+            
+            # ------------------------------------------------
+            # 🔥 濾網 2：籌碼點火加速度
+            # ------------------------------------------------
+            is_accel = False
+            accel_score = 0
+            
+            # 條件 A：旱地拔蔥 (過去沒買或賣，今天突然大買 > 500張)
+            if past_main_force <= 0 and d0_main_force >= 500:
+                is_accel = True
+                accel_score = 30
+            # 條件 B：倍數點火 (過去有買，今天買超量是過去平均的 3 倍以上，且大於 300張)
+            elif past_main_force > 0 and d0_main_force >= (past_main_force * 3) and d0_main_force >= 300:
+                is_accel = True
+                accel_score = 30
+            # 條件 C：極端鎖碼 (今天單日買超大於 2000張，無視過去)
+            elif d0_main_force >= 2000:
+                is_accel = True
+                accel_score = 20
+                
+            if not is_accel: continue # 沒有點火特徵，淘汰
+            
+            candidates.append({
+                '代號': code,
+                '名稱': name,
+                '今日主力買超': round(d0_main_force, 0),
+                '過去均買超': round(past_main_force, 0),
+                '自營商買超': round(d0_dealer, 0),
+                '點火分': accel_score
+            })
+            
+        df_candidates = pd.DataFrame(candidates)
+        
+        if df_candidates.empty:
+            status_text.text("⚠️ 今日無任何標的通過「點火加速度」與「護城河」考驗。")
+            progress_bar.progress(100)
+            return
+            
+        # ==========================================
+        # 🎯 步驟三：聯網抓取 10MA 進行「成本貼合度」審查
+        # ==========================================
+        status_text.text(f"🎯 籌碼初選通過 {len(df_candidates)} 檔，正在聯網核對主力成本線 (10MA)...")
+        progress_bar.progress(60)
+        
+        final_dragons = []
+        total_cands = len(df_candidates)
+        
+        for i, row in df_candidates.iterrows():
             code = row['代號']
-            try:
-                tkr = yf.Ticker(f"{code}.TW")
-                hist = tkr.history(period="6mo")
-                if hist.empty:
-                    tkr = yf.Ticker(f"{code}.TWO")
-                    hist = tkr.history(period="6mo")
+            # 嘗試抓取上市 (.TW) 或上櫃 (.TWO)
+            ticker_tw = yf.Ticker(f"{code}.TW")
+            hist = ticker_tw.history(period="1mo")
+            if hist.empty:
+                ticker_two = yf.Ticker(f"{code}.TWO")
+                hist = ticker_two.history(period="1mo")
+                
+            if not hist.empty and len(hist) >= 10:
+                current_price = hist['Close'].iloc[-1]
+                ma10 = hist['Close'].tail(10).mean()
+                
+                # 計算乖離率
+                bias_10ma = ((current_price - ma10) / ma10) * 100
+                
+                # ------------------------------------------------
+                # 🎯 濾網 3：主力成本貼合度 (乖離率必須在 -2% ~ +5% 之間)
+                # ------------------------------------------------
+                if -2.0 <= bias_10ma <= filter_bias_max:
+                    # 計算總分
+                    cost_score = 40 if 0 <= bias_10ma <= 3 else 30 # 越貼合分數越高
+                    anchor_score = 30 if row['自營商買超'] <= 0 else 20 # 沒有自營商干擾拿滿分
+                    total_score = row['點火分'] + cost_score + anchor_score
                     
-                if not hist.empty and len(hist) >= 60:
-                    close = float(hist['Close'].iloc[-1])
-                    ma5 = float(hist['Close'].rolling(window=5).mean().iloc[-1])
-                    ma10 = float(hist['Close'].rolling(window=10).mean().iloc[-1])
-                    ma20 = float(hist['Close'].rolling(window=20).mean().iloc[-1])
-                    ma60 = float(hist['Close'].rolling(window=60).mean().iloc[-1])
+                    rating = "👑 S級真龍" if total_score >= 90 else "🦅 A級潛龍"
                     
-                    vol_today = float(hist['Volume'].iloc[-1]) / 1000
-                    vol_5d = float(hist['Volume'].rolling(window=5).mean().iloc[-1]) / 1000 
-                    if vol_5d == 0: vol_5d = 1 
-                    
-                    if vol_5d < filter_vol_min:
-                        stats["vol_fail"] += 1
-                        continue
-                    if close < ma60:
-                        stats["ma60_fail"] += 1
-                        continue
-                    
-                    bias_20 = ((close - ma20) / ma20) * 100
-                    if bias_20 > filter_bias_max:
-                        stats["bias_max_fail"] += 1
-                        continue
-                        
-                    sector = row['所屬族群']
-                    resonance_count = sector_counts.get(sector, 1) if sector != "其他/未分類" else 1
-                    if filter_resonance and resonance_count < 3:
-                        stats["reso_fail"] += 1
-                        continue
-                    
-                    trust_score = row['連買天數'] * 15
-                    resonance_bonus = resonance_count * 5 
-                    left_brain_score = trust_score + resonance_bonus
-                    
-                    right_brain_score = 0
-                    rb_evidence = []
-                    
-                    vol_ratio = vol_today / vol_5d
-                    if vol_ratio >= 3.0:
-                        right_brain_score += 60
-                        rb_evidence.append("爆量>3x")
-                    elif vol_ratio >= 2.5:
-                        right_brain_score += 50
-                        rb_evidence.append("爆量>2.5x")
-                    elif vol_ratio >= 1.5:
-                        right_brain_score += 30
-                        rb_evidence.append("出量>1.5x")
-                        
-                    right_brain_score += 10 
-                    high_20d = float(hist['High'].rolling(window=20).max().iloc[-2])
-                    if close >= high_20d:
-                        right_brain_score += 10
-                        rb_evidence.append("創20日高")
-                        
-                    abs_bias = abs(bias_20)
-                    if abs_bias < 3.0:
-                        right_brain_score += 20
-                        rb_evidence.append("乖離<3%")
-                    elif abs_bias <= 5.0:
-                        right_brain_score += 10
-                        rb_evidence.append("乖離3-5%")
-                    elif abs_bias > 8.0:
-                        right_brain_score -= 20
-                        rb_evidence.append("乖離>8%")
-                        
-                    ma_values = [ma5, ma10, ma20]
-                    entanglement = (max(ma_values) - min(ma_values)) / min(ma_values)
-                    if entanglement < 0.02 and (close > ma5 > ma10 > ma20):
-                        right_brain_score += 15
-                        rb_evidence.append("均線糾結發散")
-                    
-                    total_score = left_brain_score + right_brain_score
-                    display_resonance = f"{sector} ({resonance_count}檔)" if sector != "其他/未分類" else "無共振"
-                    
-                    if right_brain_score >= 40 and left_brain_score >= 45:
-                        strategy_type = "🔥 雙腦共振 (主將)"
-                    elif right_brain_score >= 40:
-                        strategy_type = "🚀 動能突破 (右腦)"
-                    else:
-                        strategy_type = "🛡️ 籌碼防禦 (左腦)"
-                    
-                    results.append({
-                        "代號": code, "名稱": row['名稱'], "投信總買超(張)": int(row['總買超']),
-                        "連買天數": row['連買天數'], "最新收盤": round(close, 2),
-                        "月線乖離(%)": round(bias_20, 2), "今日量比": round(vol_ratio, 1),
-                        "🤝 族群共振": display_resonance, "🛡️ 左腦分": left_brain_score,
-                        "🚀 右腦分": right_brain_score, "🔥 總分": round(total_score, 1),
-                        "🎯 戰略屬性": strategy_type,
-                        "🧠 右腦證據": ",".join(rb_evidence) if rb_evidence else "量縮洗盤中"
+                    final_dragons.append({
+                        '評級': rating,
+                        '總分': total_score,
+                        '代號': code,
+                        '名稱': row['名稱'],
+                        '收盤價': round(current_price, 2),
+                        '10MA乖離(%)': round(bias_10ma, 2),
+                        '今日主力買超(張)': row['今日主力買超'],
+                        '過去均買超(張)': row['過去均買超'],
+                        '自營商買超(張)': row['自營商買超']
                     })
-                else:
-                    stats["yf_fail"] += 1
-            except:
-                stats["yf_fail"] += 1
-            progress_bar.progress(20 + int(((i + 1) / total_csv_stocks) * 75))
             
-        status_text.text("⏳ [3/3] 彙整戰情報告...")
+            # 防封鎖冷卻
+            time.sleep(0.1)
+            progress_bar.progress(60 + int(40 * (i / total_cands)))
+            
+        # ==========================================
+        # 🏆 步驟四：產出 V35 終極戰報
+        # ==========================================
         progress_bar.progress(100)
-        status_text.empty()
+        status_text.text("✅ V35 終極掃描完成！")
         
-        # 🤖 產生 AI 戰略簡報 Prompt
-        top_sectors_str = ", ".join([f"{k}({v}檔)" for k, v in sector_counts.head(3).items()]) if not sector_counts.empty else "無明顯族群"
-        survivors_str = ""
-        for r in sorted(results, key=lambda x: x['🔥 總分'], reverse=True):
-            survivors_str += f"- [{r['代號']}] {r['名稱']} (總分:{r['🔥 總分']} | 屬性:{r['🎯 戰略屬性']} | 乖離:{r['月線乖離(%)']}%)\n"
-        if not survivors_str:
-            survivors_str = "- 無標的存活\n"
+        if final_dragons:
+            df_final = pd.DataFrame(final_dragons)
+            df_final = df_final.sort_values(by=['總分', '今日主力買超(張)'], ascending=[False, False]).reset_index(drop=True)
             
-        calendar_alert = st.session_state.get('calendar_alert_text', '🟢 【平靜期】目前無重大日曆事件')
-
-        prompt_text = f"""【HIOS Wave Radar V29 戰情交接包】
-請 Manus 首席軍師接收以下雷達掃描數據，並結合今日大盤風控燈號與最新聯網情報，為我進行深度戰略推演：
-
-📅 0. 日曆風險參數：
-- {calendar_alert}
-
-📊 1. 原始籌碼熱力圖 (投信真正的主戰場)：
-- 總掃描純淨個股數：{total_csv_stocks} 檔 (已排除 ETF)
-- 投信買超前三大族群：{top_sectors_str}
-
-☠️ 2. 雷達擊殺報告 (市場真實的洗盤/過熱狀況)：
-- 跌破季線死刑：{stats['ma60_fail']} 檔 (趨勢轉空)
-- 乖離過大被殺：{stats['bias_max_fail']} 檔 (追高風險/投信結帳區)
-- 流動性/無共振淘汰：{stats['vol_fail'] + stats['reso_fail']} 檔
-
-🏆 3. 最終存活菁英 (請針對以下標的進行聯網與盈虧比分析)：
-{survivors_str}
-💡 總司令指示：
-請先判斷上述「原始熱力圖」與「存活菁英」是否存在資金錯位？並結合目前外資空單水位，告訴我這幾檔菁英是「真建倉」還是「假突破」？給出具體的資金分配與防守建議！"""
-
-        st.session_state['radar_results'] = results
-        st.session_state['radar_stats'] = stats
-        st.session_state['radar_total_csv'] = total_csv_stocks
-        st.session_state['filter_resonance'] = filter_resonance
-        st.session_state['strategy_prompt'] = prompt_text
-
-    if 'radar_results' in st.session_state:
-        results = st.session_state['radar_results']
-        stats = st.session_state['radar_stats']
-        total_csv_stocks = st.session_state['radar_total_csv']
-        saved_filter_resonance = st.session_state.get('filter_resonance', True)
-        
-        with st.expander("🛠️ 雷達濾網擊殺報告 (點擊展開看真相)", expanded=False):
-            st.markdown(f"**CSV 原始投信買超純淨個股數**：`{total_csv_stocks}` 檔 *(已排除 ETF)*")
-            st.markdown(f"❌ **無報價/連線失敗**：`{stats['yf_fail']}` 檔")
-            st.markdown(f"❌ **流動性不足被殺**：`{stats['vol_fail']}` 檔")
-            st.markdown(f"❌ **跌破季線死刑**：`{stats['ma60_fail']}` 檔")
-            st.markdown(f"❌ **乖離過大被殺**：`{stats['bias_max_fail']}` 檔")
-            if saved_filter_resonance:
-                st.markdown(f"❌ **無族群共振被殺**：`{stats['reso_fail']}` 檔")
-            st.markdown(f"✅ **最終存活真龍**：`{len(results)}` 檔")
-        
-        if results:
-            final_df = pd.DataFrame(results).sort_values('🔥 總分', ascending=False).reset_index(drop=True)
-            st.success(f"🎯 掃描完成！共篩選出 {len(final_df)} 檔符合條件的標的。")
-            st.dataframe(final_df, use_container_width=True)
+            st.success(f"🎯 歷經 V35 地獄級篩選，全市場僅存 **{len(df_final)}** 檔真龍！")
+            st.dataframe(df_final, use_container_width=True)
             
-            st.markdown("### 🤖 一鍵生成 AI 戰略簡報")
-            st.caption("💡 點擊程式碼區塊右上角的「複製」按鈕，直接貼給 Manus 進行深度戰略討論！")
-            st.code(st.session_state.get('strategy_prompt', ''), language="markdown")
-            
-            # ==========================================
-            # 🛡️ 效能優化區：使用 st.form 阻擋全域重載
-            # ==========================================
-            st.markdown("### 🎯 鎖定目標：加入戰情監控")
-            with st.form(key="add_portfolio_form", border=True):
-                col_sel, col_cost, col_btn = st.columns([2, 1, 1])
-                with col_sel:
-                    selected_codes = st.multiselect(
-                        "選擇要加入監控的標的：", 
-                        final_df['代號'].tolist(),
-                        format_func=lambda x: f"{x} - {final_df[final_df['代號']==x]['名稱'].values[0]}"
-                    )
-                with col_cost:
-                    default_cost = st.number_input("設定建倉成本 (若尚未買進可設為 0)", min_value=0.0, value=0.0, step=0.5)
-                with col_btn:
-                    st.write("") 
-                    st.write("")
-                    # 改用 form_submit_button，點擊後才會觸發重載
-                    submit_btn = st.form_submit_button("➕ 加入監控中心", type="primary", use_container_width=True)
-                    
-                if submit_btn:
-                    if selected_codes:
-                        add_targets_to_portfolio(selected_codes, default_cost, final_df)
-                        st.success(f"✅ 成功將 {len(selected_codes)} 檔標的加入監控中心！請記得在左側邊欄下載備份！")
-                    else:
-                        st.warning("⚠️ 請先從左側選單選擇至少一檔標的。")
+            # 將結果存入 Session State 供其他模組使用
+            st.session_state['v34_report'] = df_final
         else:
-            st.warning("⚠️ 經過嚴格的技術面與籌碼面濾網，本次沒有標的符合條件。請查看上方的「擊殺報告」了解原因。")
-            if 'strategy_prompt' in st.session_state:
-                st.markdown("### 🤖 一鍵生成 AI 戰略簡報")
-                st.caption("💡 即使沒有標的存活，您依然可以將擊殺報告貼給 Manus，分析資金撤退方向！")
-                st.code(st.session_state['strategy_prompt'], language="markdown")
+            st.warning("⚠️ 經過 10MA 成本貼合度審查，所有標的皆因「乖離過大(追高風險)」或「跌破均線」被淘汰。今日建議空手！")
+            
+    except Exception as e:
+        st.error(f"V35 雷達運算發生錯誤: {e}")
+        status_text.text("❌ 掃描中斷")
