@@ -14,22 +14,22 @@ def run_grand_unification(uploaded_csvs):
     
     try:
         # ==========================================
-        # 📂 步驟一：防彈級 CSV 解析器
+        # 📂 步驟一：防彈級 CSV 解析器 (上市+上櫃通吃)
         # ==========================================
-        status_text.text("📂 [1/3] 正在解析多日法人籌碼數據 (啟動防彈解析)...")
+        status_text.text("📂 [1/3] 正在解析多日法人籌碼數據 (上市+上櫃雙引擎)...")
         all_data = []
         
         for idx, file in enumerate(uploaded_csvs):
             file.seek(0)
             content = file.read()
             
-            # 1. 智慧解碼 (處理中文編碼)
+            # 1. 智慧解碼
             try: text = content.decode('utf-8-sig')
             except:
                 try: text = content.decode('cp950')
                 except: continue
                 
-            # 2. 智慧尋找真正的標題列 (跳過官方的廢話標題)
+            # 2. 智慧尋找真正的標題列
             lines = text.splitlines()
             header_idx = 0
             for i, line in enumerate(lines):
@@ -40,22 +40,25 @@ def run_grand_unification(uploaded_csvs):
             # 3. 正式讀取表格
             df = pd.read_csv(io.StringIO(text), header=header_idx)
             
-            # 4. 鎖定關鍵欄位
+            # 4. 🛡️ 雙市場通吃欄位鎖定 (破解上櫃的破折號陷阱)
             col_code = next((c for c in df.columns if '代號' in c or '代碼' in c), None)
             col_name = next((c for c in df.columns if '名稱' in c), None)
-            col_foreign = next((c for c in df.columns if '外陸資買賣超' in c or '外資買賣超' in c), None)
-            col_trust = next((c for c in df.columns if '投信買賣超' in c), None)
             
-            # 自營商欄位處理 (優先找總和，找不到再找避險)
-            col_dealer = next((c for c in df.columns if '自營商買賣超' in c and '自行' not in c and '避險' not in c), None)
+            # 外資：同時包含 (外資 或 外陸資) 且包含 買賣超
+            col_foreign = next((c for c in df.columns if ('外資' in c or '外陸資' in c) and '買賣超' in c), None)
+            # 投信：同時包含 投信 且包含 買賣超
+            col_trust = next((c for c in df.columns if '投信' in c and '買賣超' in c), None)
+            
+            # 自營商：優先找總和，找不到再找避險
+            col_dealer = next((c for c in df.columns if '自營商' in c and '買賣超' in c and '自行' not in c and '避險' not in c), None)
             if not col_dealer:
-                col_dealer = next((c for c in df.columns if '自營商買賣超' in c), None)
+                col_dealer = next((c for c in df.columns if '自營商' in c and '買賣超' in c), None)
             
             if not all([col_code, col_name, col_foreign, col_trust]): continue
             
-            # 5. 深度清洗代號 (去除官方常加的 ="2330" 符號)
+            # 5. 深度清洗代號
             df[col_code] = df[col_code].astype(str).str.replace('=', '').str.replace('"', '').str.strip()
-            df = df[df[col_code].str.len() == 4] # 只抓 4 碼純股票
+            df = df[df[col_code].str.len() == 4]
             df = df[df[col_code].str.isnumeric()]
             
             # 6. 轉換張數
