@@ -18,6 +18,7 @@ def run_grand_unification(uploaded_csvs):
         status_text.text("📂 [1/3] 正在解析多日法人籌碼數據...")
         all_data = []
         for idx, file in enumerate(uploaded_csvs):
+            file.seek(0) # 🛡️ 關鍵修復：強制將檔案讀取指標歸零
             try: df = pd.read_csv(file, encoding='utf-8-sig')
             except:
                 file.seek(0)
@@ -48,7 +49,11 @@ def run_grand_unification(uploaded_csvs):
             df_clean['File_Index'] = idx
             all_data.append(df_clean)
             
-        if not all_data: return pd.DataFrame()
+        if not all_data: 
+            status_text.text("❌ 解析失敗：無法讀取 CSV 內容，請重新上傳檔案。")
+            my_bar.empty()
+            return pd.DataFrame()
+            
         df_all = pd.concat(all_data, ignore_index=True)
         
         # ==========================================
@@ -88,7 +93,10 @@ def run_grand_unification(uploaded_csvs):
                 candidates.append({'代號': code, '名稱': name, '今日主力買超': d0_main, '過去均買超': past_main, '自營商買超': d0_dealer, '點火分': accel_score})
                 
         df_cands = pd.DataFrame(candidates)
-        if df_cands.empty: return pd.DataFrame()
+        if df_cands.empty: 
+            status_text.text("⚠️ 今日無任何標的通過「點火加速度」考驗。")
+            my_bar.progress(100)
+            return pd.DataFrame()
         
         # ==========================================
         # 🎯 步驟三：聯網核對 10MA 成本貼合度
