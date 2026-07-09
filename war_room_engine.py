@@ -2,6 +2,7 @@ import pandas as pd
 import yfinance as yf
 import time
 import streamlit as st
+import io
 
 def run_grand_unification(uploaded_csvs):
     if not uploaded_csvs or len(uploaded_csvs) < 2:
@@ -13,30 +14,51 @@ def run_grand_unification(uploaded_csvs):
     
     try:
         # ==========================================
-        # 📂 步驟一：解析多日 CSV 數據
+        # 📂 步驟一：防彈級 CSV 解析器
         # ==========================================
-        status_text.text("📂 [1/3] 正在解析多日法人籌碼數據...")
+        status_text.text("📂 [1/3] 正在解析多日法人籌碼數據 (啟動防彈解析)...")
         all_data = []
+        
         for idx, file in enumerate(uploaded_csvs):
-            file.seek(0) # 🛡️ 關鍵修復：強制將檔案讀取指標歸零
-            try: df = pd.read_csv(file, encoding='utf-8-sig')
-            except:
-                file.seek(0)
-                try: df = pd.read_csv(file, encoding='cp950')
-                except: continue
+            file.seek(0)
+            content = file.read()
             
+            # 1. 智慧解碼 (處理中文編碼)
+            try: text = content.decode('utf-8-sig')
+            except:
+                try: text = content.decode('cp950')
+                except: continue
+                
+            # 2. 智慧尋找真正的標題列 (跳過官方的廢話標題)
+            lines = text.splitlines()
+            header_idx = 0
+            for i, line in enumerate(lines):
+                if '代號' in line or '代碼' in line:
+                    header_idx = i
+                    break
+                    
+            # 3. 正式讀取表格
+            df = pd.read_csv(io.StringIO(text), header=header_idx)
+            
+            # 4. 鎖定關鍵欄位
             col_code = next((c for c in df.columns if '代號' in c or '代碼' in c), None)
             col_name = next((c for c in df.columns if '名稱' in c), None)
-            col_foreign = next((c for c in df.columns if '外陸資買賣超' in c and '不含' in c), None)
+            col_foreign = next((c for c in df.columns if '外陸資買賣超' in c or '外資買賣超' in c), None)
             col_trust = next((c for c in df.columns if '投信買賣超' in c), None)
+            
+            # 自營商欄位處理 (優先找總和，找不到再找避險)
             col_dealer = next((c for c in df.columns if '自營商買賣超' in c and '自行' not in c and '避險' not in c), None)
+            if not col_dealer:
+                col_dealer = next((c for c in df.columns if '自營商買賣超' in c), None)
             
             if not all([col_code, col_name, col_foreign, col_trust]): continue
             
-            df[col_code] = df[col_code].astype(str).str.strip()
-            df = df[df[col_code].str.len() == 4]
+            # 5. 深度清洗代號 (去除官方常加的 ="2330" 符號)
+            df[col_code] = df[col_code].astype(str).str.replace('=', '').str.replace('"', '').str.strip()
+            df = df[df[col_code].str.len() == 4] # 只抓 4 碼純股票
             df = df[df[col_code].str.isnumeric()]
             
+            # 6. 轉換張數
             for col in [col_foreign, col_trust, col_dealer]:
                 if col and col in df.columns:
                     df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0) / 1000
@@ -50,7 +72,7 @@ def run_grand_unification(uploaded_csvs):
             all_data.append(df_clean)
             
         if not all_data: 
-            status_text.text("❌ 解析失敗：無法讀取 CSV 內容，請重新上傳檔案。")
+            status_text.text("❌ 解析失敗：無法在 CSV 中找到正確的籌碼欄位。")
             my_bar.empty()
             return pd.DataFrame()
             
