@@ -30,7 +30,6 @@ try: import broker_memory
 except ImportError: broker_memory = None
 try: import war_room_engine
 except ImportError: war_room_engine = None
-# 🌊 新增：V36 族群資金活水模組
 try: import sector_flow_radar
 except ImportError: sector_flow_radar = None
 
@@ -127,12 +126,12 @@ def fetch_and_parse_yahoo(stock_id):
 # ==========================================
 # ⚙️ 系統全域設定
 # ==========================================
-st.set_page_config(page_title="HIOS Wave Radar V36", page_icon="🎯", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="HIOS Wave Radar V36.5", page_icon="🎯", layout="wide", initial_sidebar_state="expanded")
 load_local_memory()
 
 def main():
     st.sidebar.title("🎯 HIOS Wave Radar")
-    st.sidebar.caption("V36 宏觀與微觀雙引擎版")
+    st.sidebar.caption("V36.5 雲端不朽版")
     
     st.sidebar.header("📂 1. 數據引擎")
     uploaded_csvs = st.sidebar.file_uploader("上傳法人買賣超 CSV", type=['csv'], accept_multiple_files=True)
@@ -153,12 +152,26 @@ def main():
     filter_vol_min = st.sidebar.number_input("💧 5日均量下限 (張)", min_value=0, max_value=20000, value=3000, step=500)
     filter_bias_max = st.sidebar.number_input("🔥 月線乖離率上限 (%)", min_value=1.0, max_value=50.0, value=5.0, step=0.5)
     
+    # ==========================================
+    # 🗄️ 4. 系統記憶與備份 (雲端生命線)
+    # ==========================================
     st.sidebar.header("🗄️ 4. 系統記憶與備份")
     if st.sidebar.button("💾 手動儲存本機記憶", use_container_width=True): save_local_memory()
+    
+    # 下載備份 (收盤後必做)
     st.sidebar.download_button(label="📥 下載系統備份檔 (ZIP)", data=create_backup_zip(), file_name="Hios_Backup.zip", mime="application/zip", use_container_width=True)
+    
+    # 上傳還原 (開盤前必做)
+    uploaded_zip = st.sidebar.file_uploader("📤 上傳備份檔還原系統 (ZIP)", type=['zip'])
+    if uploaded_zip is not None:
+        if st.sidebar.button("🔄 執行還原", type="primary", use_container_width=True):
+            if restore_from_zip(uploaded_zip): 
+                st.sidebar.success("✅ 系統還原成功！請重整網頁。")
+            else: 
+                st.sidebar.error("❌ 還原失敗，請確認 ZIP 格式。")
                 
     # ==========================================
-    # 🚀 主戰情室 (擴充為 8 個分頁)
+    # 🚀 主戰情室 (8 個分頁)
     # ==========================================
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
         "🔥 終極戰報", "🌊 族群資金活水", "🌐 總體風控", "🛡️ 持股監控", 
@@ -230,7 +243,7 @@ def main():
 
             st.divider()
             
-            # 🎯 單兵狙擊 (保留給想單獨看某一檔的總司令)
+            # 🎯 單兵狙擊
             st.subheader("🎯 單兵狙擊：送往 X 光狙擊室")
             col1, col2 = st.columns([3, 1])
             with col1:
@@ -246,13 +259,9 @@ def main():
         else:
             st.info("👈 請從左側邊欄上傳 CSV，並點擊「🔴 一鍵啟動每日總掃描」來生成今日戰報。")
 
-    # 🌊 新增：族群資金活水面板
     with tab2:
-        if sector_flow_radar:
-            sector_flow_radar.render_sector_flow_ui()
-        else:
-            st.warning("⚠️ 找不到 `sector_flow_radar.py`，請確認檔案已建立。")
-
+        if sector_flow_radar: sector_flow_radar.render_sector_flow_ui()
+        else: st.warning("⚠️ 找不到 `sector_flow_radar.py`，請確認檔案已建立。")
     with tab3:
         if market_filter: market_filter.render_market_dashboard()
     with tab4:
