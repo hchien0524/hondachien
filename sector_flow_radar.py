@@ -33,32 +33,41 @@ def init_sector_db():
 # 📥 官方數據直連採集引擎 (TWSE)
 # ==========================================
 def fetch_twse_sector_data():
-    """直連台灣證交所抓取各類股成交金額"""
-    url = "https://www.twse.com.tw/exchangeReport/BFI82U?response=json"
+    """直連台灣證交所抓取各類股成交金額 (BFIAMU)"""
+    # 🛡️ 雙重備援機制：先試舊版 API，若失敗自動切換新版 RWD API
+    url_primary = "https://www.twse.com.tw/exchangeReport/BFIAMU?response=json"
+    url_backup = "https://www.twse.com.tw/rwd/zh/afterTrading/BFIAMU?response=json"
+    
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64 ) AppleWebKit/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64 ) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
     
     try:
-        response = requests.get(url, headers=headers, timeout=10)
-        data = response.json()
-        
-        if data.get('stat') != 'OK':
-            return None, "證交所 API 回應異常"
+        # 嘗試連線
+        response = requests.get(url_primary, headers=headers, timeout=10)
+        try:
+            data = response.json()
+        except Exception:
+            # 若舊版失效，啟動備援連線
+            response = requests.get(url_backup, headers=headers, timeout=10)
+            data = response.json()
             
-        # 解析官方數據 (欄位: 類股名稱, 成交股數, 成交筆數, 成交金額)
+        if data.get('stat') != 'OK':
+            return None, "證交所 API 回應異常或今日無數據"
+            
+        # 解析官方數據 (BFIAMU 欄位: 0.分類指數名稱, 1.成交股數, 2.成交金額, 3.成交筆數, 4.漲跌指數)
         raw_data = data.get('data', [])
         parsed_data = []
         total_market_value = 0.0
         
         for row in raw_data:
             sector_name = row[0].strip()
-            # 排除非產業的統計欄位
-            if sector_name in ['總計', '合計', '電子工業', '未含金融電子股', '未含金融股']:
+            # 排除非單一產業的統計大項
+            if sector_name in ['總計', '合計', '電子工業', '未含金融電子股', '未含金融股', '電子類指數', '金融保險類指數', '未含電子股']:
                 continue
                 
-            # 清洗成交金額 (去除逗號轉數字)
-            trade_value_str = row[3].replace(',', '')
+            # 清洗成交金額 (Index 2 是成交金額，去除逗號轉數字)
+            trade_value_str = str(row[2]).replace(',', '')
             try:
                 trade_value = float(trade_value_str)
             except:
@@ -78,13 +87,13 @@ def fetch_twse_sector_data():
                 item['percentage'] = 0.0
                 
         df = pd.DataFrame(parsed_data)
-        # 取得官方報表日期 (民國年轉西元年)
+        
+        # 取得官方報表日期 (BFIAMU 回傳格式通常為 YYYYMMDD，例如 "20260714")
         tw_date = data.get('date', '')
-        if tw_date:
-            parts = tw_date.split()
-            year = int(parts[0]) + 1911
-            month = int(parts[1])
-            day = int(parts[2])
+        if tw_date and len(tw_date) == 8:
+            year = int(tw_date[:4])
+            month = int(tw_date[4:6])
+            day = int(tw_date[6:])
             record_date = f"{year}-{month:02d}-{day:02d}"
         else:
             record_date = datetime.datetime.now().strftime("%Y-%m-%d")
@@ -170,7 +179,7 @@ def render_sector_flow_ui():
     init_sector_db()
     
     st.header("🌊 V36 族群資金活水 (Top-Down 宏觀雷達)")
-    st.markdown("透過直連證交所官方數據，追蹤 33 大類股資金流向，精準抓出**「連續 3 天資金偷偷流入」**的隱形冠軍板塊！")
+    st.markdown("透過直連證交所官方數據，追蹤各類股資金流向，精準抓出**「連續 3 天資金偷偷流入」**的隱形冠軍板塊！")
     
     col1, col2 = st.columns([1, 2])
     with col1:
@@ -185,7 +194,8 @@ def render_sector_flow_ui():
                     st.error(result)
                     
     with col2:
-        st.markdown("🔗 **🕵️‍♂️ 官方查帳直達車：** [點我前往 TWSE 證交所官方網頁核對數據](https://www.twse.com.tw/zh/trading/historical/bfi82u.html )")
+        # 🔗 修正為正確的 BFIAMU 官方網址
+        st.markdown("🔗 **🕵️‍♂️ 官方查帳直達車：** [點我前往 TWSE 證交所官方網頁核對數據](https://www.twse.com.tw/zh/trading/historical/bfiamu.html )")
         st.caption("💡 系統數據 100% 來自官方，拒絕黑箱，歡迎總司令隨時查帳！")
 
     st.divider()
