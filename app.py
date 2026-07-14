@@ -30,6 +30,9 @@ try: import broker_memory
 except ImportError: broker_memory = None
 try: import war_room_engine
 except ImportError: war_room_engine = None
+# 🌊 新增：V36 族群資金活水模組
+try: import sector_flow_radar
+except ImportError: sector_flow_radar = None
 
 DATA_FILE = "hios_data.json"
 DB_FILE = "broker_memory.db"
@@ -93,7 +96,7 @@ def render_strategic_benchmarks_ui():
 # ==========================================
 def fetch_and_parse_yahoo(stock_id):
     url = f"https://tw.stock.yahoo.com/quote/{stock_id}/broker-trading"
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64 )'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64  )'}
     try:
         res = requests.get(url, headers=headers, timeout=5)
         if res.status_code == 200:
@@ -124,12 +127,12 @@ def fetch_and_parse_yahoo(stock_id):
 # ==========================================
 # ⚙️ 系統全域設定
 # ==========================================
-st.set_page_config(page_title="HIOS Wave Radar V34.5", page_icon="🎯", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="HIOS Wave Radar V36", page_icon="🎯", layout="wide", initial_sidebar_state="expanded")
 load_local_memory()
 
 def main():
     st.sidebar.title("🎯 HIOS Wave Radar")
-    st.sidebar.caption("V34.5 批量狙擊版")
+    st.sidebar.caption("V36 宏觀與微觀雙引擎版")
     
     st.sidebar.header("📂 1. 數據引擎")
     uploaded_csvs = st.sidebar.file_uploader("上傳法人買賣超 CSV", type=['csv'], accept_multiple_files=True)
@@ -155,15 +158,15 @@ def main():
     st.sidebar.download_button(label="📥 下載系統備份檔 (ZIP)", data=create_backup_zip(), file_name="Hios_Backup.zip", mime="application/zip", use_container_width=True)
                 
     # ==========================================
-    # 🚀 主戰情室
+    # 🚀 主戰情室 (擴充為 8 個分頁)
     # ==========================================
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-        "🔥 終極戰報", "🌐 總體風控", "🛡️ 持股監控", "⏳ 時光膠囊", 
-        "🎯 主力 X 光狙擊", "🗄️ 歷史記憶庫", "🛡️ 戰略預備隊"
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+        "🔥 終極戰報", "🌊 族群資金活水", "🌐 總體風控", "🛡️ 持股監控", 
+        "⏳ 時光膠囊", "🎯 主力 X 光狙擊", "🗄️ 歷史記憶庫", "🛡️ 戰略預備隊"
     ])
     
     with tab1:
-        st.header("🔥 V34 總司令終極戰報")
+        st.header("🔥 V35 總司令終極戰報")
         if 'v34_report' in st.session_state and not st.session_state['v34_report'].empty:
             df_report = st.session_state['v34_report']
             st.success(f"🎯 嚴格篩選完畢！共淬鍊出 {len(df_report)} 檔 S/A 級菁英！")
@@ -243,17 +246,24 @@ def main():
         else:
             st.info("👈 請從左側邊欄上傳 CSV，並點擊「🔴 一鍵啟動每日總掃描」來生成今日戰報。")
 
+    # 🌊 新增：族群資金活水面板
     with tab2:
-        if market_filter: market_filter.render_market_dashboard()
+        if sector_flow_radar:
+            sector_flow_radar.render_sector_flow_ui()
+        else:
+            st.warning("⚠️ 找不到 `sector_flow_radar.py`，請確認檔案已建立。")
+
     with tab3:
-        if portfolio_monitor: portfolio_monitor.render_portfolio_monitor()
+        if market_filter: market_filter.render_market_dashboard()
     with tab4:
-        if backtest_engine: backtest_engine.render_time_capsule()
+        if portfolio_monitor: portfolio_monitor.render_portfolio_monitor()
     with tab5:
-        if yahoo_sniper: yahoo_sniper.render_sniper_module()
+        if backtest_engine: backtest_engine.render_time_capsule()
     with tab6:
-        if broker_memory: broker_memory.render_memory_dashboard()
+        if yahoo_sniper: yahoo_sniper.render_sniper_module()
     with tab7:
+        if broker_memory: broker_memory.render_memory_dashboard()
+    with tab8:
         render_strategic_benchmarks_ui()
 
 if __name__ == "__main__":
