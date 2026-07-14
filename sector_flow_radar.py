@@ -30,27 +30,50 @@ def init_sector_db():
         st.error(f"資料庫初始化失敗: {e}")
 
 # ==========================================
-# 📥 官方數據直連採集引擎 (TWSE)
+# 📥 官方數據直連採集引擎 (TWSE) - 終極偽裝版
 # ==========================================
 def fetch_twse_sector_data():
     """直連台灣證交所抓取各類股成交金額 (BFIAMU)"""
-    # 🛡️ 雙重備援機制：先試舊版 API，若失敗自動切換新版 RWD API
-    url_primary = "https://www.twse.com.tw/exchangeReport/BFIAMU?response=json"
-    url_backup = "https://www.twse.com.tw/rwd/zh/afterTrading/BFIAMU?response=json"
+    session = requests.Session()
     
+    # 🛡️ 破解防線 1：完全偽裝成真實的 Chrome 瀏覽器
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64 ) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/javascript, */*; q=0.01',
+        'Accept-Language': 'zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Referer': 'https://www.twse.com.tw/zh/trading/historical/bfiamu.html',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Connection': 'keep-alive'
     }
+    session.headers.update(headers )
     
     try:
-        # 嘗試連線
-        response = requests.get(url_primary, headers=headers, timeout=10)
+        # 🛡️ 破解防線 2：先拜訪網頁取得官方 Cookie (俗稱：敲門)
+        try:
+            session.get("https://www.twse.com.tw/zh/trading/historical/bfiamu.html", timeout=5 )
+            time.sleep(0.5) # 假裝人類停頓半秒
+        except:
+            pass 
+            
+        # 🛡️ 破解防線 3：加上動態時間戳記 (Timestamp) 騙過快取與機器人驗證
+        ts = int(time.time() * 1000)
+        url_primary = f"https://www.twse.com.tw/exchangeReport/BFIAMU?response=json&_={ts}"
+        url_backup = f"https://www.twse.com.tw/rwd/zh/afterTrading/BFIAMU?response=json&_={ts}"
+        
+        # 嘗試連線主節點
+        response = session.get(url_primary, timeout=10 )
         try:
             data = response.json()
         except Exception:
-            # 若舊版失效，啟動備援連線
-            response = requests.get(url_backup, headers=headers, timeout=10)
-            data = response.json()
+            # 若主節點失敗，休眠 1 秒後切換備援節點
+            time.sleep(1)
+            response = session.get(url_backup, timeout=10)
+            try:
+                data = response.json()
+            except Exception:
+                # 🛡️ 終極診斷：如果還是失敗，把證交所回傳的真實內容印出來，讓我們知道死在哪裡
+                error_preview = response.text[:100].replace('\n', ' ')
+                return None, f"證交所防火牆阻擋了連線 (HTTP {response.status_code})。回傳內容: {error_preview}..."
             
         if data.get('stat') != 'OK':
             return None, "證交所 API 回應異常或今日無數據"
@@ -88,7 +111,7 @@ def fetch_twse_sector_data():
                 
         df = pd.DataFrame(parsed_data)
         
-        # 取得官方報表日期 (BFIAMU 回傳格式通常為 YYYYMMDD，例如 "20260714")
+        # 取得官方報表日期
         tw_date = data.get('date', '')
         if tw_date and len(tw_date) == 8:
             year = int(tw_date[:4])
@@ -184,7 +207,7 @@ def render_sector_flow_ui():
     col1, col2 = st.columns([1, 2])
     with col1:
         if st.button("🔄 1. 獲取今日最新族群資金 (每日 14:00 後執行)", type="primary", use_container_width=True):
-            with st.spinner("正在直連台灣證交所抓取官方數據..."):
+            with st.spinner("正在直連台灣證交所抓取官方數據 (已啟動防封鎖偽裝)..."):
                 df_today, result = fetch_twse_sector_data()
                 
                 if df_today is not None:
@@ -194,7 +217,6 @@ def render_sector_flow_ui():
                     st.error(result)
                     
     with col2:
-        # 🔗 修正為正確的 BFIAMU 官方網址
         st.markdown("🔗 **🕵️‍♂️ 官方查帳直達車：** [點我前往 TWSE 證交所官方網頁核對數據](https://www.twse.com.tw/zh/trading/historical/bfiamu.html )")
         st.caption("💡 系統數據 100% 來自官方，拒絕黑箱，歡迎總司令隨時查帳！")
 
