@@ -34,10 +34,10 @@ def read_taiwan_stock_csv(file_obj):
     # 將真正有用的資料重新組合
     csv_data = '\n'.join(lines[header_idx:])
     
-    # 3. 破解尾部與數字地雷：thousands=',' 處理數字逗號，on_bad_lines='skip' 略過尾部備註
+    # 3. 破解尾部與數字地雷
     df = pd.read_csv(io.StringIO(csv_data), thousands=',', on_bad_lines='skip')
     
-    # 清理欄位名稱（去除多餘空白與引號）
+    # 清理欄位名稱
     df.columns = [str(c).strip().replace('"', '').replace('=', '') for c in df.columns]
     
     return df
@@ -82,7 +82,6 @@ with tab2:
         if st.button("🚀 啟動 V38 全局掃描"):
             df_list = []
             for f in uploaded_files:
-                # 使用我們特製的防彈讀取器
                 df = read_taiwan_stock_csv(f)
                 if not df.empty:
                     df_list.append(df)
@@ -94,8 +93,8 @@ with tab2:
                 else:
                     st.error("無法解析上傳的 CSV 檔案，請確認檔案內容。")
     
-    # 顯示與過濾戰報
-    if 'latest_report' in st.session_state and not st.session_state['latest_report'].empty():
+    # 顯示與過濾戰報 (修復 .empty 語法)
+    if 'latest_report' in st.session_state and not st.session_state['latest_report'].empty:
         df = st.session_state['latest_report'].copy()
         
         # 根據左側邊欄的勾選進行動態過濾
