@@ -14,9 +14,9 @@ class WarRoomEngine:
         data_lake = {}
         
         try:
-            # 1. 上市 (TWSE) 本益比與行情
-            twse_pe = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL", headers=self.headers, timeout=5 ).json()
-            twse_price = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", headers=self.headers, timeout=5 ).json()
+            # 1. 上市 (TWSE) 本益比與行情 (Timeout 設為 10 秒防斷線)
+            twse_pe = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL", headers=self.headers, timeout=10 ).json()
+            twse_price = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", headers=self.headers, timeout=10 ).json()
             
             for item in twse_pe:
                 code = item.get('Code')
@@ -27,9 +27,9 @@ class WarRoomEngine:
                 if code in data_lake:
                     data_lake[code]['Close'] = pd.to_numeric(item.get('ClosingPrice'), errors='coerce')
 
-            # 2. 上櫃 (TPEx) 本益比與行情
-            tpex_pe = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis", headers=self.headers, timeout=5 ).json()
-            tpex_price = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", headers=self.headers, timeout=5 ).json()
+            # 2. 上櫃 (TPEx) 本益比與行情 (Timeout 設為 10 秒防斷線)
+            tpex_pe = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis", headers=self.headers, timeout=10 ).json()
+            tpex_price = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", headers=self.headers, timeout=10 ).json()
             
             for item in tpex_pe:
                 code = item.get('SecuritiesCompanyCode')
@@ -53,10 +53,10 @@ class WarRoomEngine:
         # --- 階段一：籌碼基礎運算 ---
         chip_data = {}
         for i, df in enumerate(df_list):
-            weight = i + 1 # 越近期的資料權重越高
+            weight = i + 1 
             
-            # 🛡️ 升級：相容上市(TWSE)與上櫃(TPEx)的欄位名稱差異
-            foreign_col = next((c for c in df.columns if '外陸資買賣超' in c or '外資及陸資' in c), None)
+            # 🛡️ 升級 1：嚴格鎖定「買賣超」欄位，避開「買進/賣出」陷阱
+            foreign_col = next((c for c in df.columns if ('外陸資' in c or '外資及陸資' in c) and '買賣超' in c), None)
             trust_col = next((c for c in df.columns if '投信' in c and '買賣超' in c), None)
             code_col = next((c for c in df.columns if '代號' in c), None)
             name_col = next((c for c in df.columns if '名稱' in c), None)
@@ -85,23 +85,22 @@ class WarRoomEngine:
                     chip_data[code]['買超天數'] += 1
                 chip_data[code]['總買超張數'] += net_buy
                 
-                # 計算點火加速度 (區分近期與早期)
-                if i >= len(df_list) - 2: # 最後兩天視為近期
+                # 計算點火加速度
+                if i >= len(df_list) - 2:
                     chip_data[code]['近期買超'] += net_buy
                 else:
                     chip_data[code]['早期買超'] += net_buy
 
-        # --- 階段二：第一層漏斗 (剔除無法人關注股) ---
-        # 條件：總買超 > 500張 或 買超天數 >= 2
+        # --- 階段二：第一層漏斗 ---
         candidates = [v for v in chip_data.values() if v['總買超張數'] > 500 or v['買超天數'] >= 2]
         
         if not candidates:
             return pd.DataFrame()
 
-        # --- 階段三：全局資料湖比對 (OpenAPI) ---
+        # --- 階段三：全局資料湖比對 ---
         data_lake = self._fetch_openapi_data()
         
-        # --- 階段四：技術面精準打擊 (yfinance) 與 標籤賦能 ---
+        # --- 階段四：技術面精準打擊與標籤賦能 ---
         results = []
         progress_bar = st.progress(0)
         status_text = st.empty()
@@ -112,17 +111,22 @@ class WarRoomEngine:
             status_text.text(f"正在進行 X 光掃描: {code} {item['名稱']} ({idx+1}/{total_candidates})")
             progress_bar.progress((idx + 1) / total_candidates)
             
-            # 取得基本面資料
             market_info = data_lake.get(code, {})
             pe_ratio = market_info.get('PE', np.nan)
-            market_type = market_info.get('Market', 'TWSE')
+            market_type = market_info.get('Market', 'TWSE') # 預設上市
             
-            # 設定 yfinance 代號
+            # 🛡️ 升級 2：智能備援機制 (Fallback)
             yf_code = f"{code}.TW" if market_type == 'TWSE' else f"{code}.TWO"
             
             try:
                 ticker = yf.Ticker(yf_code)
                 hist = ticker.history(period="80d")
+                
+                # 如果用 .TW 抓不到資料 (可能是 API 漏掉的上櫃股)，自動切換 .TWO 再試一次
+                if hist.empty and market_type == 'TWSE':
+                    yf_code = f"{code}.TWO"
+                    ticker = yf.Ticker(yf_code)
+                    hist = ticker.history(period="80d")
                 
                 if len(hist) < 60:
                     continue
@@ -130,10 +134,9 @@ class WarRoomEngine:
                 close = hist['Close'].iloc[-1]
                 ma10 = hist['Close'].rolling(window=10).mean().iloc[-1]
                 ma60 = hist['Close'].rolling(window=60).mean().iloc[-1]
-                vol_5d = hist['Volume'].iloc[-5:].mean() / 1000 # 轉張數
+                vol_5d = hist['Volume'].iloc[-5:].mean() / 1000
                 high_20d = hist['High'].iloc[-21:-1].max()
                 
-                # 計算乖離與加速度
                 bias_10 = (close - ma10) / ma10
                 bias_60 = (close - ma60) / ma60
                 
@@ -141,7 +144,6 @@ class WarRoomEngine:
                 recent_avg = item['近期買超'] / 2
                 ignition = recent_avg / early_avg if early_avg > 0 else (3.0 if recent_avg > 500 else 0)
                 
-                # 🛡️ 標籤賦能系統 (Tagging)
                 tags = []
                 if pe_ratio > 0 and pe_ratio < 15:
                     tags.append("[🛡️ 價值防禦]")
@@ -154,7 +156,6 @@ class WarRoomEngine:
                 if vol_5d > 800:
                     tags.append("[🌊 流動性佳]")
                     
-                # 只要有任何一個核心標籤，就納入戰報
                 if tags:
                     item['收盤價'] = round(close, 2)
                     item['本益比'] = round(pe_ratio, 2) if pd.notna(pe_ratio) else "N/A"
@@ -173,6 +174,5 @@ class WarRoomEngine:
             return pd.DataFrame()
             
         df_result = pd.DataFrame(results)
-        # 整理欄位順序
         cols = ['代號', '名稱', '收盤價', '本益比', '季線乖離', '買超天數', '總買超張數', '點火倍數', '戰略標籤']
         return df_result[cols].sort_values(by='總買超張數', ascending=False)
