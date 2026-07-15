@@ -105,8 +105,9 @@ class WarRoomEngine:
                 else:
                     chip_data[code]['早期買超'] += net_buy
 
-        # --- 階段二：第一層漏斗 ---
-        candidates = [v for v in chip_data.values() if v['總買超張數'] > 500 or v['買超天數'] >= 2]
+        # --- 階段二：第一層漏斗 (菁英濾網) ---
+        # 🚨 升級：收緊漏斗，必須「買超 >= 2 天」且「總買超 > 300 張」，大幅減少雜魚，防止 API 封鎖
+        candidates = [v for v in chip_data.values() if v['買超天數'] >= 2 and v['總買超張數'] > 300]
         
         if not candidates:
             return pd.DataFrame()
@@ -131,7 +132,9 @@ class WarRoomEngine:
             
             hist = pd.DataFrame()
             
-            # 🛡️ 升級 5：防彈 yfinance 雙引擎備援 (獨立 try-except 防止崩潰跳出)
+            # 🛡️ 升級：加入隱形迷彩延遲，防止 Yahoo 封鎖
+            time.sleep(0.1) 
+            
             yf_code = f"{code}.TW" if market_type == 'TWSE' else f"{code}.TWO"
             try:
                 ticker = yf.Ticker(yf_code)
@@ -141,6 +144,7 @@ class WarRoomEngine:
                 
             # 如果抓不到，強制切換市場再試一次 (TWSE <-> TPEx 互換)
             if hist.empty or len(hist) < 60:
+                time.sleep(0.1) # 再次延遲
                 fallback_code = f"{code}.TWO" if market_type == 'TWSE' else f"{code}.TW"
                 try:
                     ticker = yf.Ticker(fallback_code)
