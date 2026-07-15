@@ -79,14 +79,13 @@ class WarRoomEngine:
                 code = str(row[code_col]).replace('=', '').replace('"', '').strip()
                 name = str(row[name_col]).strip()
                 
-                # 🛡️ 純血普通股終極濾網
                 if len(code) != 4 or not code.isdigit() or code.startswith('0'):
                     continue
                 
                 try:
                     f_buy = float(str(row[foreign_col]).replace(',', ''))
                     t_buy = float(str(row[trust_col]).replace(',', ''))
-                    net_buy = (f_buy + t_buy) / 1000 # 轉換為張數
+                    net_buy = (f_buy + t_buy) / 1000 
                 except:
                     continue
                     
@@ -105,8 +104,7 @@ class WarRoomEngine:
                 else:
                     chip_data[code]['早期買超'] += net_buy
 
-        # --- 階段二：第一層漏斗 (菁英濾網) ---
-        # 🚨 升級：收緊漏斗，必須「買超 >= 2 天」且「總買超 > 300 張」，大幅減少雜魚，防止 API 封鎖
+        # --- 階段二：第一層漏斗 ---
         candidates = [v for v in chip_data.values() if v['買超天數'] >= 2 and v['總買超張數'] > 300]
         
         if not candidates:
@@ -117,22 +115,23 @@ class WarRoomEngine:
         
         # --- 階段四：技術面精準打擊與標籤賦能 ---
         results = []
+        debug_logs = [] # 💀 新增：驗屍報告清單
+        
         progress_bar = st.progress(0)
         status_text = st.empty()
         
         total_candidates = len(candidates)
         for idx, item in enumerate(candidates):
             code = item['代號']
-            status_text.text(f"正在進行 X 光掃描: {code} {item['名稱']} ({idx+1}/{total_candidates})")
+            name = item['名稱']
+            status_text.text(f"正在進行 X 光掃描: {code} {name} ({idx+1}/{total_candidates})")
             progress_bar.progress((idx + 1) / total_candidates)
             
             market_info = data_lake.get(code, {})
             pe_ratio = market_info.get('PE', np.nan)
-            market_type = market_info.get('Market', 'TWSE') # 預設上市
+            market_type = market_info.get('Market', 'TWSE') 
             
             hist = pd.DataFrame()
-            
-            # 🛡️ 升級：加入隱形迷彩延遲，防止 Yahoo 封鎖
             time.sleep(0.1) 
             
             yf_code = f"{code}.TW" if market_type == 'TWSE' else f"{code}.TWO"
@@ -142,9 +141,8 @@ class WarRoomEngine:
             except:
                 pass
                 
-            # 如果抓不到，強制切換市場再試一次 (TWSE <-> TPEx 互換)
             if hist.empty or len(hist) < 60:
-                time.sleep(0.1) # 再次延遲
+                time.sleep(0.1)
                 fallback_code = f"{code}.TWO" if market_type == 'TWSE' else f"{code}.TW"
                 try:
                     ticker = yf.Ticker(fallback_code)
@@ -152,7 +150,14 @@ class WarRoomEngine:
                 except:
                     pass
             
-            if hist.empty or len(hist) < 60:
+            # 💀 驗屍紀錄 1：Yahoo 抓不到資料
+            if hist.empty:
+                debug_logs.append({'代號': code, '名稱': name, '淘汰原因': 'yfinance 完全抓無資料 (可能代號錯誤或被封鎖)'})
+                continue
+                
+            # 💀 驗屍紀錄 2：上市櫃未滿 3 個月的新股
+            if len(hist) < 60:
+                debug_logs.append({'代號': code, '名稱': name, '淘汰原因': f'K線資料不足60天 (僅 {len(hist)} 天)'})
                 continue
                 
             try:
@@ -188,12 +193,23 @@ class WarRoomEngine:
                     item['點火倍數'] = round(ignition, 1)
                     item['戰略標籤'] = " ".join(tags)
                     results.append(item)
+                else:
+                    # 💀 驗屍紀錄 3：不符合任何一個戰略標籤
+                    pe_str = f"{pe_ratio:.1f}" if pd.notna(pe_ratio) else "N/A"
+                    reason = f"無標籤 (PE:{pe_str}, 季乖離:{bias_60*100:.1f}%, 點火:{ignition:.1f}, 均量:{vol_5d:.0f}張)"
+                    debug_logs.append({'代號': code, '名稱': name, '淘汰原因': reason})
                     
             except Exception as e:
+                debug_logs.append({'代號': code, '名稱': name, '淘汰原因': f'計算過程發生錯誤: {str(e)}'})
                 continue
                 
         progress_bar.empty()
         status_text.empty()
+        
+        # 💀 將驗屍報告印在畫面上
+        if debug_logs:
+            with st.expander("🛠️ 系統診斷報告 (點擊查看 76 檔股票為何被淘汰)", expanded=True):
+                st.dataframe(pd.DataFrame(debug_logs), use_container_width=True)
         
         if not results:
             return pd.DataFrame()
