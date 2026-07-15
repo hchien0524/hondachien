@@ -2,19 +2,15 @@ import streamlit as st
 import pandas as pd
 import io
 from war_room_engine import WarRoomEngine
-from broker_memory import BrokerMemory
-# 假設您有這兩個模組，若無可先註解掉
-# from sector_flow_radar import SectorFlowRadar 
-# from yahoo_sniper import YahooSniper
 
 st.set_page_config(page_title="HIOS V38 大一統量化中樞", layout="wide")
 
-# 初始化模組
+# 初始化模組 (暫時移除 BrokerMemory 以解除封印)
 @st.cache_resource
 def init_modules():
-    return WarRoomEngine(), BrokerMemory()
+    return WarRoomEngine()
 
-engine, memory = init_modules()
+engine = init_modules()
 
 # --- 左側邊欄：戰略控制台 ---
 with st.sidebar:
@@ -34,17 +30,18 @@ with st.sidebar:
     
     st.markdown("---")
     st.header("💾 3. 系統防呆備份")
-    if st.button("📦 一鍵存檔並產生備份檔"):
-        memory.save_all() # 強制存檔
-        zip_buffer = memory.backup_to_zip()
-        if zip_buffer:
-            st.download_button(
-                label="📥 點此下載 ZIP 備份",
-                data=zip_buffer,
-                file_name="HIOS_V38_Backup.zip",
-                mime="application/zip"
-            )
-            st.success("備份檔已準備就緒！")
+    st.info("備份模組建置中... (暫時解除封印)")
+    # if st.button("📦 一鍵存檔並產生備份檔"):
+    #     memory.save_all() # 強制存檔
+    #     zip_buffer = memory.backup_to_zip()
+    #     if zip_buffer:
+    #         st.download_button(
+    #             label="📥 點此下載 ZIP 備份",
+    #             data=zip_buffer,
+    #             file_name="HIOS_V38_Backup.zip",
+    #             mime="application/zip"
+    #         )
+    #         st.success("備份檔已準備就緒！")
 
 # --- 主畫面：4 大作戰階段 ---
 st.title("HIOS V38 終極量化交易中樞")
@@ -59,8 +56,6 @@ tab1, tab2, tab3, tab4 = st.tabs([
 with tab1:
     st.header("📊 宏觀資金流向")
     st.info("此處介接 sector_flow_radar.py (族群資金雷達)")
-    # radar = SectorFlowRadar()
-    # radar.render_ui()
 
 with tab2:
     st.header("🎯 終極戰報：標籤賦能雷達")
@@ -95,10 +90,7 @@ with tab2:
 with tab3:
     st.header("🔬 主力 X 光狙擊室")
     st.info("此處介接 yahoo_sniper.py (分點券商追蹤)")
-    # sniper = YahooSniper()
-    # sniper.render_ui()
 
 with tab4:
     st.header("📁 歷史記憶與持股管理")
     st.info("此處介接 broker_memory.py (資料庫管理)")
-    # memory.render_ui()
