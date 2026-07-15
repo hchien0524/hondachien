@@ -20,29 +20,37 @@ class WarRoomEngine:
             
             for item in twse_price:
                 code = item.get('Code')
+                if not code: continue
                 if code not in data_lake:
                     data_lake[code] = {'Market': 'TWSE'}
-                data_lake[code]['Close'] = pd.to_numeric(item.get('ClosingPrice'), errors='coerce')
+                close_val = item.get('ClosingPrice') or item.get('Close')
+                data_lake[code]['Close'] = pd.to_numeric(close_val, errors='coerce')
                 
             for item in twse_pe:
                 code = item.get('Code')
+                if not code: continue
                 if code in data_lake:
-                    data_lake[code]['PE'] = pd.to_numeric(item.get('PEratio'), errors='coerce')
+                    pe_val = item.get('PEratio') or item.get('PERatio') or item.get('PeRatio')
+                    data_lake[code]['PE'] = pd.to_numeric(pe_val, errors='coerce')
 
             # 2. 上櫃 (TPEx) 行情與本益比
             tpex_price = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", headers=self.headers, timeout=10 ).json()
             tpex_pe = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis", headers=self.headers, timeout=10 ).json()
             
             for item in tpex_price:
-                code = item.get('SecuritiesCompanyCode')
+                code = item.get('SecuritiesCompanyCode') or item.get('Code')
+                if not code: continue
                 if code not in data_lake:
                     data_lake[code] = {'Market': 'TPEx'}
-                data_lake[code]['Close'] = pd.to_numeric(item.get('Close'), errors='coerce')
+                close_val = item.get('Close') or item.get('ClosingPrice')
+                data_lake[code]['Close'] = pd.to_numeric(close_val, errors='coerce')
                 
             for item in tpex_pe:
-                code = item.get('SecuritiesCompanyCode')
+                code = item.get('SecuritiesCompanyCode') or item.get('Code')
+                if not code: continue
                 if code in data_lake:
-                    data_lake[code]['PE'] = pd.to_numeric(item.get('PERatio'), errors='coerce')
+                    pe_val = item.get('PERatio') or item.get('PeRatio') or item.get('PEratio')
+                    data_lake[code]['PE'] = pd.to_numeric(pe_val, errors='coerce')
                     
         except Exception as e:
             print(f"OpenAPI 獲取失敗: {e}")
@@ -71,8 +79,7 @@ class WarRoomEngine:
                 code = str(row[code_col]).replace('=', '').replace('"', '').strip()
                 name = str(row[name_col]).strip()
                 
-                # 🛡️ 升級 4：純血普通股終極濾網
-                # 必須是 4 碼、必須全數字、且「絕對不能是 0 開頭」！
+                # 🛡️ 純血普通股終極濾網
                 if len(code) != 4 or not code.isdigit() or code.startswith('0'):
                     continue
                 
@@ -122,20 +129,29 @@ class WarRoomEngine:
             pe_ratio = market_info.get('PE', np.nan)
             market_type = market_info.get('Market', 'TWSE') # 預設上市
             
-            yf_code = f"{code}.TW" if market_type == 'TWSE' else f"{code}.TWO"
+            hist = pd.DataFrame()
             
+            # 🛡️ 升級 5：防彈 yfinance 雙引擎備援 (獨立 try-except 防止崩潰跳出)
+            yf_code = f"{code}.TW" if market_type == 'TWSE' else f"{code}.TWO"
             try:
                 ticker = yf.Ticker(yf_code)
                 hist = ticker.history(period="80d")
+            except:
+                pass
                 
-                if hist.empty and market_type == 'TWSE':
-                    yf_code = f"{code}.TWO"
-                    ticker = yf.Ticker(yf_code)
+            # 如果抓不到，強制切換市場再試一次 (TWSE <-> TPEx 互換)
+            if hist.empty or len(hist) < 60:
+                fallback_code = f"{code}.TWO" if market_type == 'TWSE' else f"{code}.TW"
+                try:
+                    ticker = yf.Ticker(fallback_code)
                     hist = ticker.history(period="80d")
+                except:
+                    pass
+            
+            if hist.empty or len(hist) < 60:
+                continue
                 
-                if len(hist) < 60:
-                    continue
-                    
+            try:
                 close = hist['Close'].iloc[-1]
                 ma10 = hist['Close'].rolling(window=10).mean().iloc[-1]
                 ma60 = hist['Close'].rolling(window=60).mean().iloc[-1]
@@ -150,7 +166,7 @@ class WarRoomEngine:
                 ignition = recent_avg / early_avg if early_avg > 0 else (3.0 if recent_avg > 500 else 0)
                 
                 tags = []
-                if pe_ratio > 0 and pe_ratio < 15:
+                if pd.notna(pe_ratio) and 0 < pe_ratio < 15:
                     tags.append("[🛡️ 價值防禦]")
                 if abs(bias_60) <= 0.05:
                     tags.append("[📉 底部打底]")
