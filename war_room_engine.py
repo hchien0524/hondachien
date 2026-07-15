@@ -55,9 +55,9 @@ class WarRoomEngine:
         for i, df in enumerate(df_list):
             weight = i + 1 # 越近期的資料權重越高
             
-            # 統一欄位名稱 (相容上市櫃)
-            foreign_col = next((c for c in df.columns if '外陸資買賣超' in c), None)
-            trust_col = next((c for c in df.columns if '投信買賣超' in c), None)
+            # 🛡️ 升級：相容上市(TWSE)與上櫃(TPEx)的欄位名稱差異
+            foreign_col = next((c for c in df.columns if '外陸資買賣超' in c or '外資及陸資' in c), None)
+            trust_col = next((c for c in df.columns if '投信' in c and '買賣超' in c), None)
             code_col = next((c for c in df.columns if '代號' in c), None)
             name_col = next((c for c in df.columns if '名稱' in c), None)
             
