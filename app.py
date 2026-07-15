@@ -126,12 +126,12 @@ def fetch_and_parse_yahoo(stock_id):
 # ==========================================
 # ⚙️ 系統全域設定
 # ==========================================
-st.set_page_config(page_title="HIOS Wave Radar V36.5", page_icon="🎯", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="HIOS Wave Radar V36.6", page_icon="🎯", layout="wide", initial_sidebar_state="expanded")
 load_local_memory()
 
 def main():
     st.sidebar.title("🎯 HIOS Wave Radar")
-    st.sidebar.caption("V36.5 雲端不朽版")
+    st.sidebar.caption("V36.6 雲端不朽版 (動態備份)")
     
     st.sidebar.header("📂 1. 數據引擎")
     uploaded_csvs = st.sidebar.file_uploader("上傳法人買賣超 CSV", type=['csv'], accept_multiple_files=True)
@@ -158,8 +158,15 @@ def main():
     st.sidebar.header("🗄️ 4. 系統記憶與備份")
     if st.sidebar.button("💾 手動儲存本機記憶", use_container_width=True): save_local_memory()
     
-    # 下載備份 (收盤後必做)
-    st.sidebar.download_button(label="📥 下載系統備份檔 (ZIP)", data=create_backup_zip(), file_name="Hios_Backup.zip", mime="application/zip", use_container_width=True)
+    # 🛡️ 下載備份 (收盤後必做) - 導入動態時間戳記
+    current_time = datetime.now().strftime("%Y%m%d_%H%M")
+    st.sidebar.download_button(
+        label="📥 下載系統備份檔 (ZIP)", 
+        data=create_backup_zip(), 
+        file_name=f"Hios_Backup_{current_time}.zip", 
+        mime="application/zip", 
+        use_container_width=True
+    )
     
     # 上傳還原 (開盤前必做)
     uploaded_zip = st.sidebar.file_uploader("📤 上傳備份檔還原系統 (ZIP)", type=['zip'])
