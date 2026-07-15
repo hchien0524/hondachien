@@ -104,12 +104,11 @@ with tab2:
         st.success(f"掃描完成！符合目前濾網條件共 {len(df)} 檔")
         st.dataframe(df, use_container_width=True)
         
-        # 🚨 恢復：批次狙擊目標鎖定與傳送
+        # 🚨 批次狙擊目標鎖定與傳送
         st.markdown("---")
         st.subheader("🎯 鎖定狙擊目標 (支援批次傳送)")
         if not df.empty:
             target_options = (df['代號'].astype(str) + " " + df['名稱']).tolist()
-            # 預設自動勾選前 3 檔，並允許使用者自由多選
             default_selections = target_options[:3] if len(target_options) >= 3 else target_options
             selected_targets = st.multiselect("請選擇要進行 X 光掃描的標的 (可複選)：", target_options, default=default_selections)
             
@@ -128,32 +127,28 @@ with tab2:
 
 with tab3:
     st.header("🔬 主力 X 光狙擊室")
-    # 🚨 恢復：實彈介接 yahoo_sniper.py
     if 'sniper_targets' in st.session_state and st.session_state['sniper_targets']:
         targets = st.session_state['sniper_targets']
         st.success(f"🎯 當前鎖定批次目標：【 {', '.join(targets)} 】")
         
         try:
-            # 嘗試載入您原本的狙擊模組
             from yahoo_sniper import YahooSniper
             sniper = YahooSniper()
             
-            # 批次執行狙擊
             for code in targets:
                 st.markdown(f"### 🎯 標的：{code}")
-                # 假設您原本的函數叫做 render_ui 或類似名稱，這裡傳入代號
                 sniper.render_ui(target_code=code) 
                 st.markdown("---")
                 
         except ImportError:
             st.error("⚠️ 找不到 `yahoo_sniper.py` 檔案！請確認該檔案是否存在於您的 GitHub 中。")
         except Exception as e:
-            st.error(f"⚠️ 執行狙擊模組時發生錯誤，可能是新舊版本參數不相容：{e}")
-            st.info("💡 總司令，如果您看到這個錯誤，請把您目前的 `yahoo_sniper.py` 程式碼貼給我，我立刻幫您把接口縫合！")
+            st.error(f"⚠️ 執行狙擊模組時發生錯誤：{e}")
             
     else:
         st.warning("⚠️ 尚未鎖定目標。請先在「階段二：終極戰報」中選擇標的並點擊傳送。")
 
 with tab4:
+    # 🚨 階段四完全解封，呼叫 broker_memory.py 的 UI 介面
     st.header("📁 歷史記憶與持股管理")
-    st.info("此處介接 broker_memory.py (資料庫管理)")
+    memory.render_ui()
