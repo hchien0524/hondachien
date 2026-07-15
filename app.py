@@ -31,17 +31,6 @@ with st.sidebar:
     st.markdown("---")
     st.header("💾 3. 系統防呆備份")
     st.info("備份模組建置中... (暫時解除封印)")
-    # if st.button("📦 一鍵存檔並產生備份檔"):
-    #     memory.save_all() # 強制存檔
-    #     zip_buffer = memory.backup_to_zip()
-    #     if zip_buffer:
-    #         st.download_button(
-    #             label="📥 點此下載 ZIP 備份",
-    #             data=zip_buffer,
-    #             file_name="HIOS_V38_Backup.zip",
-    #             mime="application/zip"
-    #         )
-    #         st.success("備份檔已準備就緒！")
 
 # --- 主畫面：4 大作戰階段 ---
 st.title("HIOS V38 終極量化交易中樞")
@@ -61,7 +50,18 @@ with tab2:
     st.header("🎯 終極戰報：標籤賦能雷達")
     if uploaded_files:
         if st.button("🚀 啟動 V38 全局掃描"):
-            df_list = [pd.read_csv(f) for f in uploaded_files]
+            df_list = []
+            # 🛡️ 防彈讀取邏輯：自動處理 Big5 與 UTF-8 編碼衝突
+            for f in uploaded_files:
+                try:
+                    # 先嘗試用 utf-8-sig 讀取
+                    df = pd.read_csv(f, encoding='utf-8-sig')
+                except UnicodeDecodeError:
+                    # 若失敗，將檔案游標歸零，改用台灣官方常用的 big5 讀取
+                    f.seek(0)
+                    df = pd.read_csv(f, encoding='big5')
+                df_list.append(df)
+                
             with st.spinner("正在啟動全局資料湖與漏斗過濾..."):
                 report_df = engine.process_chips(df_list)
                 st.session_state['latest_report'] = report_df
