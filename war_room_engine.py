@@ -71,9 +71,9 @@ class WarRoomEngine:
                 code = str(row[code_col]).replace('=', '').replace('"', '').strip()
                 name = str(row[name_col]).strip()
                 
-                # 🛡️ 升級 3：純血台股濾網 (秒殺 ETF、公債、權證)
-                # 只要不是 4 碼純數字，直接無情剔除！
-                if len(code) != 4 or not code.isdigit():
+                # 🛡️ 升級 4：純血普通股終極濾網
+                # 必須是 4 碼、必須全數字、且「絕對不能是 0 開頭」！
+                if len(code) != 4 or not code.isdigit() or code.startswith('0'):
                     continue
                 
                 try:
