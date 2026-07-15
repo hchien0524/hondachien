@@ -14,31 +14,35 @@ class WarRoomEngine:
         data_lake = {}
         
         try:
-            # 1. 上市 (TWSE) 本益比與行情 (Timeout 設為 10 秒防斷線)
-            twse_pe = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL", headers=self.headers, timeout=10 ).json()
+            # 1. 上市 (TWSE) 行情與本益比
             twse_price = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", headers=self.headers, timeout=10 ).json()
+            twse_pe = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL", headers=self.headers, timeout=10 ).json()
             
-            for item in twse_pe:
-                code = item.get('Code')
-                data_lake[code] = {'PE': pd.to_numeric(item.get('PEratio'), errors='coerce'), 'Market': 'TWSE'}
-                
             for item in twse_price:
                 code = item.get('Code')
-                if code in data_lake:
-                    data_lake[code]['Close'] = pd.to_numeric(item.get('ClosingPrice'), errors='coerce')
-
-            # 2. 上櫃 (TPEx) 本益比與行情 (Timeout 設為 10 秒防斷線)
-            tpex_pe = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis", headers=self.headers, timeout=10 ).json()
-            tpex_price = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", headers=self.headers, timeout=10 ).json()
-            
-            for item in tpex_pe:
-                code = item.get('SecuritiesCompanyCode')
-                data_lake[code] = {'PE': pd.to_numeric(item.get('PERatio'), errors='coerce'), 'Market': 'TPEx'}
+                if code not in data_lake:
+                    data_lake[code] = {'Market': 'TWSE'}
+                data_lake[code]['Close'] = pd.to_numeric(item.get('ClosingPrice'), errors='coerce')
                 
+            for item in twse_pe:
+                code = item.get('Code')
+                if code in data_lake:
+                    data_lake[code]['PE'] = pd.to_numeric(item.get('PEratio'), errors='coerce')
+
+            # 2. 上櫃 (TPEx) 行情與本益比
+            tpex_price = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", headers=self.headers, timeout=10 ).json()
+            tpex_pe = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis", headers=self.headers, timeout=10 ).json()
+            
             for item in tpex_price:
                 code = item.get('SecuritiesCompanyCode')
+                if code not in data_lake:
+                    data_lake[code] = {'Market': 'TPEx'}
+                data_lake[code]['Close'] = pd.to_numeric(item.get('Close'), errors='coerce')
+                
+            for item in tpex_pe:
+                code = item.get('SecuritiesCompanyCode')
                 if code in data_lake:
-                    data_lake[code]['Close'] = pd.to_numeric(item.get('Close'), errors='coerce')
+                    data_lake[code]['PE'] = pd.to_numeric(item.get('PERatio'), errors='coerce')
                     
         except Exception as e:
             print(f"OpenAPI 獲取失敗: {e}")
@@ -55,7 +59,6 @@ class WarRoomEngine:
         for i, df in enumerate(df_list):
             weight = i + 1 
             
-            # 🛡️ 升級 1：嚴格鎖定「買賣超」欄位，避開「買進/賣出」陷阱
             foreign_col = next((c for c in df.columns if ('外陸資' in c or '外資及陸資' in c) and '買賣超' in c), None)
             trust_col = next((c for c in df.columns if '投信' in c and '買賣超' in c), None)
             code_col = next((c for c in df.columns if '代號' in c), None)
@@ -67,6 +70,11 @@ class WarRoomEngine:
             for _, row in df.iterrows():
                 code = str(row[code_col]).replace('=', '').replace('"', '').strip()
                 name = str(row[name_col]).strip()
+                
+                # 🛡️ 升級 3：純血台股濾網 (秒殺 ETF、公債、權證)
+                # 只要不是 4 碼純數字，直接無情剔除！
+                if len(code) != 4 or not code.isdigit():
+                    continue
                 
                 try:
                     f_buy = float(str(row[foreign_col]).replace(',', ''))
@@ -85,7 +93,6 @@ class WarRoomEngine:
                     chip_data[code]['買超天數'] += 1
                 chip_data[code]['總買超張數'] += net_buy
                 
-                # 計算點火加速度
                 if i >= len(df_list) - 2:
                     chip_data[code]['近期買超'] += net_buy
                 else:
@@ -115,14 +122,12 @@ class WarRoomEngine:
             pe_ratio = market_info.get('PE', np.nan)
             market_type = market_info.get('Market', 'TWSE') # 預設上市
             
-            # 🛡️ 升級 2：智能備援機制 (Fallback)
             yf_code = f"{code}.TW" if market_type == 'TWSE' else f"{code}.TWO"
             
             try:
                 ticker = yf.Ticker(yf_code)
                 hist = ticker.history(period="80d")
                 
-                # 如果用 .TW 抓不到資料 (可能是 API 漏掉的上櫃股)，自動切換 .TWO 再試一次
                 if hist.empty and market_type == 'TWSE':
                     yf_code = f"{code}.TWO"
                     ticker = yf.Ticker(yf_code)
