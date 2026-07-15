@@ -4,6 +4,7 @@ import sqlite3
 import requests
 import datetime
 import time
+import re
 
 # ==========================================
 # 💾 系統設定與資料庫初始化
@@ -30,83 +31,91 @@ def init_sector_db():
         st.error(f"資料庫初始化失敗: {e}")
 
 # ==========================================
-# 📥 官方數據直連採集引擎 (TWSE OpenAPI 官方合法通道)
+# 📥 官方數據直連採集引擎 (TWSE OpenAPI)
 # ==========================================
 def fetch_twse_sector_data():
-    """直連台灣證交所 OpenAPI 抓取各類股成交金額 (BFIAMU)"""
-    # 🛡️ 終極解法：改用證交所官方專為程式開發者提供的 OpenAPI，完全合法且不阻擋！
     url = "https://openapi.twse.com.tw/v1/exchangeReport/BFIAMU"
-    
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64 )'}
     try:
-        # OpenAPI 不需要偽裝 Header ，直接光明正大走進去
-        response = requests.get(url, timeout=10)
-        
+        response = requests.get(url, headers=headers, timeout=5)
         if response.status_code != 200:
-            return None, f"OpenAPI 連線失敗 (HTTP {response.status_code})"
+            return None, f"連線失敗 (HTTP {response.status_code})"
             
-        data = response.json()
+        try:
+            data = response.json()
+        except Exception:
+            return None, "證交所防火牆阻擋了雲端 IP，請使用下方的「手動備用彈匣」。"
+            
         if not data or len(data) == 0:
-            return None, "今日 OpenAPI 尚無數據，請確認是否已過下午 2 點或今日為休市日。"
+            return None, "今日 OpenAPI 尚無數據。"
             
         parsed_data = []
         total_market_value = 0.0
         
         for row in data:
-            # OpenAPI 的欄位名稱是英文的
             sector_name = row.get('IndexClasses', '').strip()
-            
-            # 排除非單一產業的統計大項
             if sector_name in ['總計', '合計', '電子工業', '未含金融電子股', '未含金融股', '電子類指數', '金融保險類指數', '未含電子股']:
                 continue
+            try: trade_value = float(row.get('TradeValue', 0))
+            except: trade_value = 0.0
                 
-            try:
-                trade_value = float(row.get('TradeValue', 0))
-            except:
-                trade_value = 0.0
-                
-            parsed_data.append({
-                'sector_name': sector_name,
-                'trade_value': trade_value
-            })
+            parsed_data.append({'sector_name': sector_name, 'trade_value': trade_value})
             total_market_value += trade_value
             
-        # 計算資金佔比
         for item in parsed_data:
-            if total_market_value > 0:
-                item['percentage'] = round((item['trade_value'] / total_market_value) * 100, 2)
-            else:
-                item['percentage'] = 0.0
+            item['percentage'] = round((item['trade_value'] / total_market_value) * 100, 2) if total_market_value > 0 else 0.0
                 
         df = pd.DataFrame(parsed_data)
-        
-        # OpenAPI 通常提供當日最新數據，直接押上今日日期
         record_date = datetime.datetime.now().strftime("%Y-%m-%d")
-        
         return df, record_date
         
     except Exception as e:
-        return None, f"連線失敗: {e}"
+        return None, f"連線異常: {e} (請使用手動備用彈匣)"
+
+# ==========================================
+# 📥 手動解析引擎 (防彈機制)
+# ==========================================
+def parse_manual_data(raw_text):
+    """解析總司令手動貼上的證交所表格數據"""
+    parsed_data = []
+    lines = raw_text.strip().split('\n')
+    
+    for line in lines:
+        parts = re.split(r'\s+', line.strip())
+        if len(parts) >= 3:
+            sector_name = parts[0]
+            if sector_name in ['總計', '合計', '電子工業', '未含金融電子股', '未含金融股', '電子類指數', '金融保險類指數', '未含電子股']:
+                continue
+            try:
+                # 假設格式：族群名稱 | 成交金額 | 佔比(%)
+                trade_value = float(parts[1].replace(',', ''))
+                percentage = float(parts[2].replace('%', '').replace(',', ''))
+                parsed_data.append({
+                    'sector_name': sector_name,
+                    'trade_value': trade_value,
+                    'percentage': percentage
+                })
+            except ValueError:
+                continue
+                
+    if parsed_data:
+        return pd.DataFrame(parsed_data)
+    return None
 
 # ==========================================
 # 💾 記憶歸檔與戰報分析引擎
 # ==========================================
 def save_to_db(df, record_date):
-    """將今日數據寫入 SQLite 永久記憶庫"""
     try:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
-        
         insert_sql = '''
             INSERT INTO sector_flow_history (record_date, sector_name, trade_value, percentage)
             VALUES (?, ?, ?, ?)
             ON CONFLICT(record_date, sector_name) 
             DO UPDATE SET trade_value=excluded.trade_value, percentage=excluded.percentage
         '''
-        
-        records = []
-        for _, row in df.iterrows():
-            records.append((record_date, row['sector_name'], row['trade_value'], row['percentage']))
-            
+        records = [(record_date, row['sector_name'], row['trade_value'], row['percentage']) for _, row in df.iterrows()]
         cursor.executemany(insert_sql, records)
         conn.commit()
         conn.close()
@@ -116,10 +125,8 @@ def save_to_db(df, record_date):
         return False
 
 def analyze_invisible_champions():
-    """跨日比對：抓出連續 3 天資金流入的隱形冠軍"""
     try:
         conn = sqlite3.connect(DB_FILE)
-        # 抓取最近的 3 個交易日
         dates_query = "SELECT DISTINCT record_date FROM sector_flow_history ORDER BY record_date DESC LIMIT 3"
         dates_df = pd.read_sql_query(dates_query, conn)
         
@@ -128,31 +135,21 @@ def analyze_invisible_champions():
             return None, f"⚠️ 歷史數據不足！目前僅有 {len(dates_df)} 天數據，需累積 3 天才能啟動隱形冠軍濾網。"
             
         recent_dates = dates_df['record_date'].tolist()
-        recent_dates.sort() # 排序為 [Day1, Day2, Day3(最新)]
+        recent_dates.sort() 
         d1, d2, d3 = recent_dates[0], recent_dates[1], recent_dates[2]
         
-        # 抓取這 3 天的所有數據
         data_query = f"SELECT * FROM sector_flow_history WHERE record_date IN ('{d1}', '{d2}', '{d3}')"
         df_all = pd.read_sql_query(data_query, conn)
         conn.close()
         
-        # 樞紐分析：將日期轉為欄位，方便比對
-        df_pivot = df_all.pivot(index='sector_name', columns='record_date', values='percentage').reset_index()
-        df_pivot = df_pivot.dropna() # 排除資料不全的族群
+        df_pivot = df_all.pivot(index='sector_name', columns='record_date', values='percentage').reset_index().dropna()
         
-        # ⚔️ 核心濾網：連續 3 天資金佔比上升 (Day1 < Day2 < Day3)
-        champions = df_pivot[
-            (df_pivot[d1] < df_pivot[d2]) & 
-            (df_pivot[d2] < df_pivot[d3])
-        ].copy()
-        
-        # 計算 3 天總增幅
+        champions = df_pivot[(df_pivot[d1] < df_pivot[d2]) & (df_pivot[d2] < df_pivot[d3])].copy()
         if not champions.empty:
             champions['3日增幅(%)'] = round(champions[d3] - champions[d1], 2)
             champions = champions.sort_values(by='3日增幅(%)', ascending=False).reset_index(drop=True)
             
         return champions, recent_dates
-        
     except Exception as e:
         return None, f"分析失敗: {e}"
 
@@ -163,59 +160,66 @@ def render_sector_flow_ui():
     init_sector_db()
     
     st.header("🌊 V36 族群資金活水 (Top-Down 宏觀雷達)")
-    st.markdown("透過直連證交所官方數據，追蹤各類股資金流向，精準抓出**「連續 3 天資金偷偷流入」**的隱形冠軍板塊！")
+    st.markdown("追蹤各類股資金流向，精準抓出**「連續 3 天資金偷偷流入」**的隱形冠軍板塊！")
     
     col1, col2 = st.columns([1, 2])
     with col1:
-        if st.button("🔄 1. 獲取今日最新族群資金 (每日 14:00 後執行)", type="primary", use_container_width=True):
-            with st.spinner("正在直連台灣證交所 OpenAPI 官方通道..."):
+        if st.button("🔄 1. 自動獲取今日資金 (雲端易受阻)", type="primary", use_container_width=True):
+            with st.spinner("連線中..."):
                 df_today, result = fetch_twse_sector_data()
-                
                 if df_today is not None:
-                    if save_to_db(df_today, result):
-                        st.success(f"✅ 成功抓取並歸檔 {result} 的官方資金數據！")
+                    if save_to_db(df_today, result): st.success(f"✅ 成功歸檔 {result} 數據！")
                 else:
                     st.error(result)
                     
     with col2:
-        st.markdown("🔗 **🕵️‍♂️ 官方查帳直達車：** [點我前往 TWSE 證交所官方網頁核對數據](https://www.twse.com.tw/zh/trading/historical/bfiamu.html )")
-        st.caption("💡 系統數據 100% 來自官方 OpenAPI，拒絕黑箱，歡迎總司令隨時查帳！")
+        st.markdown("🔗 **🕵️‍♂️ 官方查帳直達車：** [點我前往 TWSE 證交所官方網頁](https://www.twse.com.tw/zh/trading/historical/bfiamu.html )")
+        st.caption("💡 若自動獲取失敗，請點擊上方連結，將表格內容複製並貼到下方。")
+
+    # 🛡️ 無敵防禦：手動備用彈匣
+    with st.expander("📥 手動備用彈匣 (若自動連線失敗請用此處)", expanded=True):
+        manual_date = st.date_input("選擇數據日期", datetime.date.today())
+        manual_data = st.text_area("請貼上證交所表格數據 (包含族群、金額、佔比)：", height=150, placeholder="半導體類指數 398665864184 37.18\n電子零組件類指數 290558443046 27.09...")
+        
+        if st.button("💾 解析並寫入記憶庫"):
+            if manual_data.strip():
+                df_manual = parse_manual_data(manual_data)
+                if df_manual is not None and not df_manual.empty:
+                    date_str = manual_date.strftime("%Y-%m-%d")
+                    if save_to_db(df_manual, date_str):
+                        st.success(f"✅ 成功解析並歸檔 {date_str} 的資金數據！")
+                else:
+                    st.error("❌ 解析失敗，請確認貼上的格式是否正確。")
+            else:
+                st.warning("⚠️ 請先貼上數據！")
 
     st.divider()
     
-    # 產出戰報
     st.subheader("👑 隱形冠軍戰報 (連續 3 天資金流入)")
     champions, dates_info = analyze_invisible_champions()
     
-    if isinstance(dates_info, str): # 代表回傳的是錯誤/警告訊息
+    if isinstance(dates_info, str): 
         st.warning(dates_info)
     elif champions is not None and not champions.empty:
         d1, d2, d3 = dates_info[0], dates_info[1], dates_info[2]
         st.success(f"🎯 發現資金正在偷偷建倉！比對區間：{d1} ➔ {d3}")
         
-        # 格式化顯示
         display_df = champions[['sector_name', d1, d2, d3, '3日增幅(%)']].copy()
         display_df.columns = ['族群名稱', f'{d1} 佔比(%)', f'{d2} 佔比(%)', f'最新 {d3} 佔比(%)', '3日總增幅(%)']
         st.dataframe(display_df, use_container_width=True)
-        
-        st.info("💡 **CIO 戰略提示：** 請將 V35 雷達掃出的個股，與上方的「隱形冠軍族群」進行交叉比對。若兩者重疊，即為勝率極高的【族群共振真龍】！")
     else:
-        st.info("📉 目前無任何族群符合「連續 3 天資金流入」的嚴格標準。資金可能處於快速輪動或觀望狀態。")
+        st.info("📉 目前無任何族群符合「連續 3 天資金流入」的嚴格標準。")
 
-    # 原始數據展開區
-    with st.expander("📊 展開查看今日所有族群原始資金佔比 (供查帳驗算)"):
+    with st.expander("📊 展開查看最新族群原始資金佔比 (供查帳驗算)"):
         try:
             conn = sqlite3.connect(DB_FILE)
-            latest_date_query = "SELECT MAX(record_date) FROM sector_flow_history"
-            latest_date = pd.read_sql_query(latest_date_query, conn).iloc[0,0]
-            
+            latest_date = pd.read_sql_query("SELECT MAX(record_date) FROM sector_flow_history", conn).iloc[0,0]
             if latest_date:
-                raw_query = f"SELECT sector_name AS '族群名稱', trade_value AS '成交金額(元)', percentage AS '資金佔比(%)' FROM sector_flow_history WHERE record_date = '{latest_date}' ORDER BY percentage DESC"
-                df_raw = pd.read_sql_query(raw_query, conn)
+                df_raw = pd.read_sql_query(f"SELECT sector_name AS '族群名稱', trade_value AS '成交金額(元)', percentage AS '資金佔比(%)' FROM sector_flow_history WHERE record_date = '{latest_date}' ORDER BY percentage DESC", conn)
                 st.write(f"📅 數據日期：{latest_date}")
                 st.dataframe(df_raw, use_container_width=True)
             else:
                 st.write("尚無歷史數據。")
             conn.close()
-        except Exception as e:
+        except Exception:
             st.write("無法讀取原始數據。")
