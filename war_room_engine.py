@@ -104,8 +104,9 @@ class WarRoomEngine:
                 else:
                     chip_data[code]['早期買超'] += net_buy
 
-        # --- 階段二：第一層漏斗 ---
-        candidates = [v for v in chip_data.values() if v['買超天數'] >= 2 and v['總買超張數'] > 300]
+        # --- 階段二：第一層漏斗 (釋放上櫃潛龍) ---
+        # 🚨 恢復為 OR 條件，只要買超 >= 2 天，或者總買超 > 300 張，就能進入 X 光機！
+        candidates = [v for v in chip_data.values() if v['買超天數'] >= 2 or v['總買超張數'] > 300]
         
         if not candidates:
             return pd.DataFrame()
@@ -115,7 +116,7 @@ class WarRoomEngine:
         
         # --- 階段四：技術面精準打擊與標籤賦能 ---
         results = []
-        debug_logs = [] # 💀 新增：驗屍報告清單
+        debug_logs = [] 
         
         progress_bar = st.progress(0)
         status_text = st.empty()
@@ -132,7 +133,7 @@ class WarRoomEngine:
             market_type = market_info.get('Market', 'TWSE') 
             
             hist = pd.DataFrame()
-            time.sleep(0.1) 
+            time.sleep(0.1) # 隱形迷彩，防 Yahoo 封鎖
             
             yf_code = f"{code}.TW" if market_type == 'TWSE' else f"{code}.TWO"
             try:
@@ -150,12 +151,10 @@ class WarRoomEngine:
                 except:
                     pass
             
-            # 💀 驗屍紀錄 1：Yahoo 抓不到資料
             if hist.empty:
                 debug_logs.append({'代號': code, '名稱': name, '淘汰原因': 'yfinance 完全抓無資料 (可能代號錯誤或被封鎖)'})
                 continue
                 
-            # 💀 驗屍紀錄 2：上市櫃未滿 3 個月的新股
             if len(hist) < 60:
                 debug_logs.append({'代號': code, '名稱': name, '淘汰原因': f'K線資料不足60天 (僅 {len(hist)} 天)'})
                 continue
@@ -194,7 +193,6 @@ class WarRoomEngine:
                     item['戰略標籤'] = " ".join(tags)
                     results.append(item)
                 else:
-                    # 💀 驗屍紀錄 3：不符合任何一個戰略標籤
                     pe_str = f"{pe_ratio:.1f}" if pd.notna(pe_ratio) else "N/A"
                     reason = f"無標籤 (PE:{pe_str}, 季乖離:{bias_60*100:.1f}%, 點火:{ignition:.1f}, 均量:{vol_5d:.0f}張)"
                     debug_logs.append({'代號': code, '名稱': name, '淘汰原因': reason})
@@ -206,9 +204,8 @@ class WarRoomEngine:
         progress_bar.empty()
         status_text.empty()
         
-        # 💀 將驗屍報告印在畫面上
         if debug_logs:
-            with st.expander("🛠️ 系統診斷報告 (點擊查看 76 檔股票為何被淘汰)", expanded=True):
+            with st.expander(f"🛠️ 系統診斷報告 (共 {len(debug_logs)} 檔未達標)", expanded=True):
                 st.dataframe(pd.DataFrame(debug_logs), use_container_width=True)
         
         if not results:
