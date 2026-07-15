@@ -5,8 +5,8 @@ from war_room_engine import WarRoomEngine
 
 st.set_page_config(page_title="HIOS V38 大一統量化中樞", layout="wide")
 
-# 初始化模組
-@st.cache_resource
+# 🚨 【關鍵修復】拔除 @st.cache_resource 快取封印！
+# 確保系統每次重整都會載入最新的 war_room_engine.py 邏輯
 def init_modules():
     return WarRoomEngine()
 
