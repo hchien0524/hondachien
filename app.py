@@ -5,12 +5,42 @@ from war_room_engine import WarRoomEngine
 
 st.set_page_config(page_title="HIOS V38 大一統量化中樞", layout="wide")
 
-# 初始化模組 (暫時移除 BrokerMemory 以解除封印)
+# 初始化模組
 @st.cache_resource
 def init_modules():
     return WarRoomEngine()
 
 engine = init_modules()
+
+def read_taiwan_stock_csv(file_obj):
+    """台股專用 CSV 防彈讀取器：自動跳過無用標題、備註，並處理編碼與逗號"""
+    content = file_obj.read()
+    
+    # 1. 破解編碼地雷
+    try:
+        text = content.decode('utf-8-sig')
+    except UnicodeDecodeError:
+        text = content.decode('big5', errors='ignore')
+        
+    lines = text.split('\n')
+    
+    # 2. 破解頭部地雷：尋找真正的標題行
+    header_idx = 0
+    for i, line in enumerate(lines):
+        if '代號' in line or '證券代號' in line:
+            header_idx = i
+            break
+            
+    # 將真正有用的資料重新組合
+    csv_data = '\n'.join(lines[header_idx:])
+    
+    # 3. 破解尾部與數字地雷：thousands=',' 處理數字逗號，on_bad_lines='skip' 略過尾部備註
+    df = pd.read_csv(io.StringIO(csv_data), thousands=',', on_bad_lines='skip')
+    
+    # 清理欄位名稱（去除多餘空白與引號）
+    df.columns = [str(c).strip().replace('"', '').replace('=', '') for c in df.columns]
+    
+    return df
 
 # --- 左側邊欄：戰略控制台 ---
 with st.sidebar:
@@ -51,20 +81,18 @@ with tab2:
     if uploaded_files:
         if st.button("🚀 啟動 V38 全局掃描"):
             df_list = []
-            # 🛡️ 防彈讀取邏輯：自動處理 Big5 與 UTF-8 編碼衝突
             for f in uploaded_files:
-                try:
-                    # 先嘗試用 utf-8-sig 讀取
-                    df = pd.read_csv(f, encoding='utf-8-sig')
-                except UnicodeDecodeError:
-                    # 若失敗，將檔案游標歸零，改用台灣官方常用的 big5 讀取
-                    f.seek(0)
-                    df = pd.read_csv(f, encoding='big5')
-                df_list.append(df)
+                # 使用我們特製的防彈讀取器
+                df = read_taiwan_stock_csv(f)
+                if not df.empty:
+                    df_list.append(df)
                 
             with st.spinner("正在啟動全局資料湖與漏斗過濾..."):
-                report_df = engine.process_chips(df_list)
-                st.session_state['latest_report'] = report_df
+                if df_list:
+                    report_df = engine.process_chips(df_list)
+                    st.session_state['latest_report'] = report_df
+                else:
+                    st.error("無法解析上傳的 CSV 檔案，請確認檔案內容。")
     
     # 顯示與過濾戰報
     if 'latest_report' in st.session_state and not st.session_state['latest_report'].empty():
