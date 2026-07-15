@@ -2,15 +2,15 @@ import streamlit as st
 import pandas as pd
 import io
 from war_room_engine import WarRoomEngine
+from broker_memory import BrokerMemory
 
 st.set_page_config(page_title="HIOS V38 大一統量化中樞", layout="wide")
 
-# 🚨 【關鍵修復】拔除 @st.cache_resource 快取封印！
-# 確保系統每次重整都會載入最新的 war_room_engine.py 邏輯
+# 🚨 拔除快取封印，確保系統每次重整都會載入最新的邏輯
 def init_modules():
-    return WarRoomEngine()
+    return WarRoomEngine(), BrokerMemory()
 
-engine = init_modules()
+engine, memory = init_modules()
 
 def read_taiwan_stock_csv(file_obj):
     """台股專用 CSV 防彈讀取器：自動跳過無用標題、備註，並處理編碼與逗號"""
@@ -60,7 +60,19 @@ with st.sidebar:
     
     st.markdown("---")
     st.header("💾 3. 系統防呆備份")
-    st.info("備份模組建置中... (暫時解除封印)")
+    if st.button("📦 一鍵存檔並產生備份檔"):
+        memory.save_all() # 強制存檔
+        zip_buffer = memory.backup_to_zip()
+        if zip_buffer:
+            st.download_button(
+                label="📥 點此下載 ZIP 備份",
+                data=zip_buffer,
+                file_name="HIOS_V38_Backup.zip",
+                mime="application/zip"
+            )
+            st.success("備份檔已準備就緒！請點擊上方按鈕下載。")
+        else:
+            st.error("備份失敗，請確認資料庫狀態。")
 
 # --- 主畫面：4 大作戰階段 ---
 st.title("HIOS V38 終極量化交易中樞")
@@ -93,7 +105,7 @@ with tab2:
                 else:
                     st.error("無法解析上傳的 CSV 檔案，請確認檔案內容。")
     
-    # 顯示與過濾戰報 (修復 .empty 語法)
+    # 顯示與過濾戰報
     if 'latest_report' in st.session_state and not st.session_state['latest_report'].empty:
         df = st.session_state['latest_report'].copy()
         
