@@ -3,13 +3,15 @@ import pandas as pd
 import io
 from war_room_engine import WarRoomEngine
 from broker_memory import BrokerMemory
+from sector_flow_radar import SectorFlowRadar
 
 st.set_page_config(page_title="HIOS V38 大一統量化中樞", layout="wide")
 
 def init_modules():
-    return WarRoomEngine(), BrokerMemory()
+    # 🚨 載入三大核心引擎
+    return WarRoomEngine(), BrokerMemory(), SectorFlowRadar()
 
-engine, memory = init_modules()
+engine, memory, radar = init_modules()
 
 def read_taiwan_stock_csv(file_obj):
     content = file_obj.read()
@@ -73,8 +75,8 @@ tab1, tab2, tab3, tab4 = st.tabs([
 ])
 
 with tab1:
-    st.header("📊 宏觀資金流向")
-    st.info("此處介接 sector_flow_radar.py (族群資金雷達)")
+    # 🚨 階段一完全解封，呼叫 sector_flow_radar.py 的 UI 介面
+    radar.render_ui()
 
 with tab2:
     st.header("🎯 終極戰報：標籤賦能雷達")
