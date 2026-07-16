@@ -11,7 +11,6 @@ class SectorFlowRadar:
         self._init_db()
 
     def _init_db(self):
-        """初始化族群資金歷史資料表"""
         try:
             conn = sqlite3.connect(self.db_name)
             cursor = conn.cursor()
@@ -69,7 +68,7 @@ class SectorFlowRadar:
             return None, f"連線異常: {e} (請使用手動備用彈匣)"
 
     def parse_manual_data(self, raw_text):
-        """解析總司令手動貼上的證交所表格數據"""
+        """🧠 升級版智能解析引擎：自動適應 TWSE 官方 5 欄位格式"""
         parsed_data = []
         lines = raw_text.strip().split('\n')
         
@@ -80,8 +79,20 @@ class SectorFlowRadar:
                 if sector_name in ['總計', '合計', '電子工業', '未含金融電子股', '未含金融股', '電子類指數', '金融保險類指數', '未含電子股']:
                     continue
                 try:
-                    trade_value = float(parts[1].replace(',', ''))
-                    percentage = float(parts[2].replace('%', '').replace(',', ''))
+                    # 💡 智能定位：佔比永遠在「最後一欄」
+                    percentage_str = parts[-1].replace('%', '').replace(',', '')
+                    percentage = float(percentage_str)
+                    
+                    # 💡 智能定位：如果大於等於5欄(官方格式)，成交金額在倒數第三欄
+                    if len(parts) >= 5:
+                        trade_value = float(parts[-3].replace(',', ''))
+                    else:
+                        trade_value = float(parts[1].replace(',', ''))
+                        
+                    # 🛡️ 終極防呆：如果佔比大於 100，代表抓錯欄位了，直接捨棄這筆髒資料
+                    if percentage > 100:
+                        continue
+                        
                     parsed_data.append({
                         'sector_name': sector_name,
                         'trade_value': trade_value,
@@ -175,6 +186,19 @@ class SectorFlowRadar:
                         st.error("❌ 解析失敗，請確認貼上的格式是否正確。")
                 else:
                     st.warning("⚠️ 請先貼上數據！")
+            
+            # 🚨 新增：一鍵清除錯誤數據按鈕
+            st.markdown("---")
+            if st.button("🗑️ 清除所有族群資金歷史數據 (重新來過)"):
+                try:
+                    conn = sqlite3.connect(self.db_name)
+                    cursor = conn.cursor()
+                    cursor.execute("DELETE FROM sector_flow_history")
+                    conn.commit()
+                    conn.close()
+                    st.success("✅ 錯誤數據已全數清除！請重新貼上正確的數據。")
+                except Exception as e:
+                    st.error(f"清除失敗: {e}")
 
         st.divider()
         
